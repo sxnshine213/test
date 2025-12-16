@@ -192,7 +192,7 @@ def extract_tg_user_id(init_data: str) -> str:
         pairs.append(f"{k}={data[k]}")
     data_check_string = "\n".join(pairs)
 
-    secret_key = hashlib.sha256(BOT_TOKEN.encode("utf-8")).digest()
+    secret_key = hmac.new(b"WebAppData", BOT_TOKEN.encode("utf-8"), hashlib.sha256).digest()
     calc_hash = hmac.new(secret_key, data_check_string.encode("utf-8"), hashlib.sha256).hexdigest()
 
     if not hmac.compare_digest(calc_hash, their_hash):
@@ -460,3 +460,4 @@ async def tg_webhook(request: Request):
         return {"ok": True}
 
     return {"ok": True}
+
