@@ -353,4 +353,6 @@ def claim(req: ClaimReq):
                     (prize_cost, uid),
                 )
                 bal = int(cur.fetchone()[0])
-                cur.execute("UPDATE spins SET status='sold' WH
+                cur.execute("UPDATE spins SET status='sold' WHERE spin_id=%s", (req.spin_id,))
+
+
