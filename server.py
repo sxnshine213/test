@@ -4,6 +4,7 @@ import random
 
 app = FastAPI()
 
+
 class SpinReq(BaseModel):
     initData: str
 
@@ -13,6 +14,10 @@ PRIZES = [
     {"id": 3, "name": "🎂 Торт", "cost": 50, "weight": 15},
     {"id": 4, "name": "💎 Алмаз", "cost": 100, "weight": 10},
 ]
+@app.get("/")
+def root():
+    return {"ok": True}
+
 
 @app.post("/spin")
 def spin(req: SpinReq):
