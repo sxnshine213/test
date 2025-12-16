@@ -9,7 +9,7 @@ import urllib.request
 from urllib.parse import parse_qsl
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -33,14 +33,24 @@ if not DATABASE_URL:
 
 START_BALANCE = int(os.environ.get("START_BALANCE", "200"))
 
+# Telegram bot token (нужен для: verify initData + createInvoiceLink + answerPreCheckoutQuery)
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()
+
+# Webhook secret header: X-Telegram-Bot-Api-Secret-Token
 TG_WEBHOOK_SECRET = os.environ.get("TG_WEBHOOK_SECRET", "").strip()
 
+# Разрешить пустой initData (только для тестов)
 ALLOW_GUEST = os.environ.get("ALLOW_GUEST", "0").strip() in ("1", "true", "True", "yes", "YES")
+
+# Максимальный возраст initData (сек)
 INITDATA_MAX_AGE_SEC = int(os.environ.get("INITDATA_MAX_AGE_SEC", str(24 * 3600)))
 
+# Pool
 PG_POOL_MIN = int(os.environ.get("PG_POOL_MIN", "1"))
 PG_POOL_MAX = int(os.environ.get("PG_POOL_MAX", "10"))
+
+# Админ-ключ для отдельного admin.html
+ADMIN_KEY = os.environ.get("ADMIN_KEY", "").strip()
 
 # Должно совпадать с карточками на фронте (есть id=5)
 PRIZES = [
@@ -85,6 +95,11 @@ class InventoryReq(BaseModel):
 class TopupCreateReq(BaseModel):
     initData: str
     stars: int
+
+
+class AdminAdjustReq(BaseModel):
+    tg_user_id: str
+    delta: int
 
 
 # ===== DB init =====
@@ -140,15 +155,25 @@ def init_db():
 init_db()
 
 
-# ===== Telegram initData =====
+# ===== Admin auth =====
+def require_admin(request: Request):
+    if not ADMIN_KEY:
+        raise HTTPException(status_code=503, detail="ADMIN_KEY not set")
+    got = request.headers.get("X-Admin-Key", "")
+    if not got or not hmac.compare_digest(got, ADMIN_KEY):
+        raise HTTPException(status_code=401, detail="admin unauthorized")
+
+
+# ===== Telegram initData verify (WebApp) =====
 def _parse_init_data(init_data: str) -> dict:
     return dict(parse_qsl(init_data, keep_blank_values=True))
 
 
 def extract_tg_user_id(init_data: str) -> str:
     """
-    Если BOT_TOKEN задан — проверяем подпись initData (рекомендуется на проде).
-    Если BOT_TOKEN не задан — упрощенно парсим user.id (НЕ рекомендуется для прода).
+    Для Telegram WebApp:
+    - проверяем подпись initData через ключ HMAC_SHA256("WebAppData", bot_token)
+    - если BOT_TOKEN не задан, делаем fallback парсинг user.id (НЕ рекомендуется)
     """
     if not init_data:
         if ALLOW_GUEST:
@@ -162,7 +187,7 @@ def extract_tg_user_id(init_data: str) -> str:
             return "guest"
         raise HTTPException(status_code=401, detail="no user in initData")
 
-    # fallback режим без проверки подписи (только для дебага)
+    # fallback без проверки подписи (только для дебага)
     if not BOT_TOKEN:
         try:
             user = json.loads(user_json)
@@ -192,6 +217,7 @@ def extract_tg_user_id(init_data: str) -> str:
         pairs.append(f"{k}={data[k]}")
     data_check_string = "\n".join(pairs)
 
+    # ВАЖНО: WebAppData (не sha256(bot_token))
     secret_key = hmac.new(b"WebAppData", BOT_TOKEN.encode("utf-8"), hashlib.sha256).digest()
     calc_hash = hmac.new(secret_key, data_check_string.encode("utf-8"), hashlib.sha256).hexdigest()
 
@@ -405,6 +431,7 @@ def topup_create(req: TopupCreateReq):
 
 @app.post("/tg/webhook")
 async def tg_webhook(request: Request):
+    # secret header check (если включен)
     if TG_WEBHOOK_SECRET:
         got = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
         if got != TG_WEBHOOK_SECRET:
@@ -461,3 +488,161 @@ async def tg_webhook(request: Request):
 
     return {"ok": True}
 
+
+# =========================
+# Admin API (для отдельного admin.html)
+# =========================
+@app.get("/admin/stats")
+def admin_stats(request: Request):
+    require_admin(request)
+    now = int(time.time())
+    day_ago = now - 86400
+
+    with pool.connection() as con:
+        with con:
+            with con.cursor() as cur:
+                cur.execute("SELECT COUNT(*) FROM users")
+                users = int(cur.fetchone()[0])
+
+                cur.execute("SELECT COALESCE(SUM(balance),0) FROM users")
+                total_balance = int(cur.fetchone()[0])
+
+                cur.execute("SELECT COUNT(*) FROM spins")
+                spins_total = int(cur.fetchone()[0])
+
+                cur.execute("SELECT COUNT(*) FROM spins WHERE created_at >= %s", (day_ago,))
+                spins_24h = int(cur.fetchone()[0])
+
+                cur.execute("SELECT COUNT(*) FROM topups")
+                topups_total = int(cur.fetchone()[0])
+
+                cur.execute("SELECT COUNT(*) FROM topups WHERE created_at >= %s", (day_ago,))
+                topups_24h = int(cur.fetchone()[0])
+
+                cur.execute("SELECT COALESCE(SUM(stars_amount),0) FROM topups WHERE status='paid'")
+                paid_stars_total = int(cur.fetchone()[0])
+
+                cur.execute(
+                    "SELECT COALESCE(SUM(stars_amount),0) FROM topups WHERE status='paid' AND paid_at >= %s",
+                    (day_ago,),
+                )
+                paid_stars_24h = int(cur.fetchone()[0])
+
+    return {
+        "users": users,
+        "total_balance": total_balance,
+        "spins_total": spins_total,
+        "spins_24h": spins_24h,
+        "topups_total": topups_total,
+        "topups_24h": topups_24h,
+        "paid_stars_total": paid_stars_total,
+        "paid_stars_24h": paid_stars_24h,
+    }
+
+
+@app.get("/admin/topups")
+def admin_topups(request: Request, limit: int = Query(80, ge=1, le=500)):
+    require_admin(request)
+
+    with pool.connection() as con:
+        with con:
+            with con.cursor() as cur:
+                cur.execute(
+                    "SELECT tg_user_id, payload, stars_amount, status, telegram_charge_id, created_at, paid_at "
+                    "FROM topups ORDER BY created_at DESC LIMIT %s",
+                    (limit,),
+                )
+                rows = cur.fetchall()
+
+    items = []
+    for r in rows:
+        items.append({
+            "tg_user_id": r[0],
+            "payload": r[1],
+            "stars_amount": int(r[2]),
+            "status": r[3],
+            "telegram_charge_id": r[4],
+            "created_at": int(r[5]),
+            "paid_at": int(r[6]) if r[6] else None,
+        })
+    return {"items": items}
+
+
+@app.get("/admin/user/{tg_user_id}")
+def admin_user(request: Request, tg_user_id: str):
+    require_admin(request)
+
+    with pool.connection() as con:
+        with con:
+            with con.cursor() as cur:
+                cur.execute("SELECT tg_user_id, balance, created_at FROM users WHERE tg_user_id=%s", (tg_user_id,))
+                u = cur.fetchone()
+                if not u:
+                    raise HTTPException(status_code=404, detail="user not found")
+
+                cur.execute(
+                    "SELECT spin_id, bet_cost, prize_id, prize_name, prize_cost, status, created_at "
+                    "FROM spins WHERE tg_user_id=%s ORDER BY created_at DESC LIMIT 30",
+                    (tg_user_id,),
+                )
+                spins = cur.fetchall()
+
+                cur.execute(
+                    "SELECT prize_id, prize_name, prize_cost, created_at "
+                    "FROM inventory WHERE tg_user_id=%s ORDER BY created_at DESC LIMIT 30",
+                    (tg_user_id,),
+                )
+                inv = cur.fetchall()
+
+                cur.execute(
+                    "SELECT payload, stars_amount, status, created_at, paid_at "
+                    "FROM topups WHERE tg_user_id=%s ORDER BY created_at DESC LIMIT 30",
+                    (tg_user_id,),
+                )
+                topups = cur.fetchall()
+
+    return {
+        "user": {"tg_user_id": u[0], "balance": int(u[1]), "created_at": int(u[2])},
+        "spins": [{
+            "spin_id": s[0],
+            "bet_cost": int(s[1]),
+            "prize_id": int(s[2]),
+            "prize_name": s[3],
+            "prize_cost": int(s[4]),
+            "status": s[5],
+            "created_at": int(s[6]),
+        } for s in spins],
+        "inventory": [{
+            "prize_id": int(i[0]),
+            "prize_name": i[1],
+            "prize_cost": int(i[2]),
+            "created_at": int(i[3]),
+        } for i in inv],
+        "topups": [{
+            "payload": t[0],
+            "stars_amount": int(t[1]),
+            "status": t[2],
+            "created_at": int(t[3]),
+            "paid_at": int(t[4]) if t[4] else None,
+        } for t in topups],
+    }
+
+
+@app.post("/admin/adjust_balance")
+def admin_adjust_balance(request: Request, req: AdminAdjustReq):
+    require_admin(request)
+
+    uid = str(req.tg_user_id)
+    delta = int(req.delta)
+
+    with pool.connection() as con:
+        with con:
+            with con.cursor() as cur:
+                get_or_create_user(cur, uid)
+                cur.execute(
+                    "UPDATE users SET balance = GREATEST(0, balance + %s) WHERE tg_user_id=%s RETURNING balance",
+                    (delta, uid),
+                )
+                bal = int(cur.fetchone()[0])
+
+    return {"ok": True, "tg_user_id": uid, "balance": bal, "delta": delta}
