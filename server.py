@@ -2,7 +2,6 @@ import os
 import json
 import time
 import random
-import sqlite3
 import uuid
 import hmac
 import hashlib
@@ -14,34 +13,35 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from psycopg_pool import ConnectionPool
+
 
 app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # позже можно ограничить доменом фронта
+    allow_origins=["*"],  # на проде лучше указать домен фронта
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-DB_PATH = os.environ.get("DB_PATH", "db.sqlite3")
+# ===== ENV =====
+DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL is not set (Render Postgres)")
+
 START_BALANCE = int(os.environ.get("START_BALANCE", "200"))
 
-# Токен бота (нужен для createInvoiceLink + answerPreCheckoutQuery + setWebhook)
+# Bot token нужен:
+# - для Telegram initData verify (если хочешь безопасно)
+# - для createInvoiceLink/answerPreCheckoutQuery (Stars)
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()
 
-# Секрет для webhook (рекомендуется). При setWebhook(secret_token=...) Telegram пришлет заголовок:
-# X-Telegram-Bot-Api-Secret-Token: <секрет>
 TG_WEBHOOK_SECRET = os.environ.get("TG_WEBHOOK_SECRET", "").strip()
-
-# Для локальных тестов в браузере можно разрешить guest (initData пустой)
-ALLOW_GUEST = os.environ.get("ALLOW_GUEST", "1").strip() in ("1", "true", "True", "yes", "YES")
-
-# Макс. “свежесть” initData (сек) — если BOT_TOKEN задан, будем проверять подпись
+ALLOW_GUEST = os.environ.get("ALLOW_GUEST", "0").strip() in ("1", "true", "True", "yes", "YES")
 INITDATA_MAX_AGE_SEC = int(os.environ.get("INITDATA_MAX_AGE_SEC", str(24 * 3600)))
 
-# Должно совпадать с карточками на фронте (есть id=5)
 PRIZES = [
     {"id": 1, "name": "❤️ Сердце", "cost": 15, "weight": 50},
     {"id": 2, "name": "🧸 Мишка", "cost": 25, "weight": 25},
@@ -50,7 +50,19 @@ PRIZES = [
     {"id": 5, "name": "🌹 Роза", "cost": 25, "weight": 25},
 ]
 
+# Pool: под нагрузку обязательно
+pool = ConnectionPool(conninfo=DATABASE_URL, min_size=1, max_size=10, timeout=10)
 
+
+@app.on_event("shutdown")
+def _shutdown():
+    try:
+        pool.close()
+    except Exception:
+        pass
+
+
+# ===== Models =====
 class MeReq(BaseModel):
     initData: str
 
@@ -72,89 +84,72 @@ class InventoryReq(BaseModel):
 
 class TopupCreateReq(BaseModel):
     initData: str
-    stars: int  # сколько Stars купить (и на сколько пополнить баланс)
+    stars: int
 
 
-def db():
-    con = sqlite3.connect(DB_PATH, check_same_thread=False)
-    con.row_factory = sqlite3.Row
-    # Более “боевой” режим SQLite
-    con.execute("PRAGMA journal_mode=WAL")
-    con.execute("PRAGMA synchronous=NORMAL")
-    con.execute("PRAGMA busy_timeout=5000")
-    return con
-
-
+# ===== DB init =====
 def init_db():
-    con = db()
-    cur = con.cursor()
+    ddl = """
+    CREATE TABLE IF NOT EXISTS users (
+      tg_user_id TEXT PRIMARY KEY,
+      balance INTEGER NOT NULL,
+      created_at BIGINT NOT NULL
+    );
 
-    cur.execute("""
-      CREATE TABLE IF NOT EXISTS users (
-        tg_user_id TEXT PRIMARY KEY,
-        balance INTEGER NOT NULL,
-        created_at INTEGER NOT NULL
-      )
-    """)
+    CREATE TABLE IF NOT EXISTS spins (
+      spin_id TEXT PRIMARY KEY,
+      tg_user_id TEXT NOT NULL REFERENCES users(tg_user_id) ON DELETE CASCADE,
+      bet_cost INTEGER NOT NULL,
+      prize_id INTEGER NOT NULL,
+      prize_name TEXT NOT NULL,
+      prize_cost INTEGER NOT NULL,
+      status TEXT NOT NULL, -- pending/sold/kept
+      created_at BIGINT NOT NULL
+    );
 
-    cur.execute("""
-      CREATE TABLE IF NOT EXISTS spins (
-        spin_id TEXT PRIMARY KEY,
-        tg_user_id TEXT NOT NULL,
-        bet_cost INTEGER NOT NULL,
-        prize_id INTEGER NOT NULL,
-        prize_name TEXT NOT NULL,
-        prize_cost INTEGER NOT NULL,
-        status TEXT NOT NULL,            -- pending/sold/kept
-        created_at INTEGER NOT NULL
-      )
-    """)
+    CREATE TABLE IF NOT EXISTS inventory (
+      id BIGSERIAL PRIMARY KEY,
+      tg_user_id TEXT NOT NULL REFERENCES users(tg_user_id) ON DELETE CASCADE,
+      prize_id INTEGER NOT NULL,
+      prize_name TEXT NOT NULL,
+      prize_cost INTEGER NOT NULL,
+      created_at BIGINT NOT NULL
+    );
 
-    cur.execute("""
-      CREATE TABLE IF NOT EXISTS inventory (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        tg_user_id TEXT NOT NULL,
-        prize_id INTEGER NOT NULL,
-        prize_name TEXT NOT NULL,
-        prize_cost INTEGER NOT NULL,
-        created_at INTEGER NOT NULL
-      )
-    """)
+    CREATE TABLE IF NOT EXISTS topups (
+      id BIGSERIAL PRIMARY KEY,
+      tg_user_id TEXT NOT NULL REFERENCES users(tg_user_id) ON DELETE CASCADE,
+      payload TEXT NOT NULL UNIQUE,
+      stars_amount INTEGER NOT NULL,
+      status TEXT NOT NULL,                 -- created/paid
+      telegram_charge_id TEXT UNIQUE,
+      created_at BIGINT NOT NULL,
+      paid_at BIGINT
+    );
 
-    # Пополнения Stars
-    cur.execute("""
-      CREATE TABLE IF NOT EXISTS topups (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        tg_user_id TEXT NOT NULL,
-        payload TEXT NOT NULL UNIQUE,
-        stars_amount INTEGER NOT NULL,
-        status TEXT NOT NULL,                 -- created/paid
-        telegram_charge_id TEXT UNIQUE,
-        created_at INTEGER NOT NULL,
-        paid_at INTEGER
-      )
-    """)
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_topups_user_time ON topups(tg_user_id, created_at)")
-
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_spins_user_time ON spins(tg_user_id, created_at)")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_inv_user_time ON inventory(tg_user_id, created_at)")
-
-    con.commit()
-    con.close()
+    CREATE INDEX IF NOT EXISTS idx_spins_user_time ON spins(tg_user_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_spins_user_status_time ON spins(tg_user_id, status, created_at);
+    CREATE INDEX IF NOT EXISTS idx_inv_user_time ON inventory(tg_user_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_topups_user_time ON topups(tg_user_id, created_at);
+    """
+    with pool.connection() as con:
+        with con.cursor() as cur:
+            cur.execute(ddl)
+        con.commit()
 
 
 init_db()
 
 
+# ===== Telegram initData =====
 def _parse_init_data(init_data: str) -> dict:
     return dict(parse_qsl(init_data, keep_blank_values=True))
 
 
 def extract_tg_user_id(init_data: str) -> str:
     """
-    Если BOT_TOKEN задан — проверяем подпись initData (как в Telegram Web Apps).
-    Если BOT_TOKEN не задан — упрощенно достаем user.id (как раньше).
-    Если initData пустой — guest (если разрешено).
+    Если BOT_TOKEN задан — проверяем подпись initData.
+    Если BOT_TOKEN не задан — упрощенно парсим user.id (небезопасно для прода).
     """
     if not init_data:
         if ALLOW_GUEST:
@@ -168,8 +163,8 @@ def extract_tg_user_id(init_data: str) -> str:
             return "guest"
         raise HTTPException(status_code=401, detail="no user in initData")
 
-    # Если бот-токена нет — работаем “как раньше” (небезопасно для прода)
     if not BOT_TOKEN:
+        # fallback режим
         try:
             user = json.loads(user_json)
             return str(user.get("id", "guest"))
@@ -178,7 +173,6 @@ def extract_tg_user_id(init_data: str) -> str:
                 return "guest"
             raise HTTPException(status_code=401, detail="bad initData")
 
-    # Проверка подписи initData (HMAC)
     their_hash = data.get("hash")
     if not their_hash:
         raise HTTPException(status_code=401, detail="initData hash missing")
@@ -211,6 +205,7 @@ def extract_tg_user_id(init_data: str) -> str:
         raise HTTPException(status_code=401, detail="bad user json")
 
 
+# ===== Telegram Bot API helper (Stars) =====
 def tg_api(method: str, payload: dict) -> dict:
     if not BOT_TOKEN:
         raise HTTPException(status_code=500, detail="BOT_TOKEN is not set")
@@ -230,39 +225,16 @@ def tg_api(method: str, payload: dict) -> dict:
     return obj["result"]
 
 
-def get_or_create_user(tg_user_id: str) -> int:
-    con = db()
-    cur = con.cursor()
-    cur.execute("SELECT balance FROM users WHERE tg_user_id=?", (tg_user_id,))
-    row = cur.fetchone()
-    if row:
-        con.close()
-        return int(row["balance"])
-
+# ===== DB helpers =====
+def get_or_create_user(cur, tg_user_id: str) -> int:
     cur.execute(
-        "INSERT INTO users (tg_user_id, balance, created_at) VALUES (?,?,?)",
-        (tg_user_id, START_BALANCE, int(time.time()))
+        "INSERT INTO users (tg_user_id, balance, created_at) "
+        "VALUES (%s, %s, %s) ON CONFLICT (tg_user_id) DO NOTHING",
+        (tg_user_id, START_BALANCE, int(time.time())),
     )
-    con.commit()
-    con.close()
-    return START_BALANCE
-
-
-def set_balance(tg_user_id: str, new_balance: int):
-    con = db()
-    con.execute("UPDATE users SET balance=? WHERE tg_user_id=?", (new_balance, tg_user_id))
-    con.commit()
-    con.close()
-
-
-def add_to_inventory(tg_user_id: str, prize_id: int, prize_name: str, prize_cost: int):
-    con = db()
-    con.execute(
-        "INSERT INTO inventory (tg_user_id, prize_id, prize_name, prize_cost, created_at) VALUES (?,?,?,?,?)",
-        (tg_user_id, int(prize_id), str(prize_name), int(prize_cost), int(time.time()))
-    )
-    con.commit()
-    con.close()
+    cur.execute("SELECT balance FROM users WHERE tg_user_id=%s", (tg_user_id,))
+    row = cur.fetchone()
+    return int(row[0]) if row else START_BALANCE
 
 
 @app.get("/")
@@ -273,61 +245,71 @@ def root():
 @app.post("/me")
 def me(req: MeReq):
     uid = extract_tg_user_id(req.initData)
-    bal = get_or_create_user(uid)
-    return {"tg_user_id": uid, "balance": bal}
+    with pool.connection() as con:
+        with con.cursor() as cur:
+            bal = get_or_create_user(cur, uid)
+        con.commit()
+    return {"tg_user_id": uid, "balance": int(bal)}
 
 
 @app.post("/inventory")
 def inventory(req: InventoryReq):
     uid = extract_tg_user_id(req.initData)
-    get_or_create_user(uid)
+    with pool.connection() as con:
+        with con.cursor() as cur:
+            get_or_create_user(cur, uid)
+            cur.execute(
+                "SELECT prize_id, prize_name, prize_cost, created_at "
+                "FROM inventory WHERE tg_user_id=%s "
+                "ORDER BY created_at DESC LIMIT 200",
+                (uid,),
+            )
+            rows = cur.fetchall()
+        con.commit()
 
-    con = db()
-    rows = con.execute(
-        "SELECT prize_id, prize_name, prize_cost, created_at FROM inventory "
-        "WHERE tg_user_id=? ORDER BY created_at DESC LIMIT 200",
-        (uid,)
-    ).fetchall()
-    con.close()
-
-    items = []
-    for r in rows:
-        items.append({
-            "prize_id": int(r["prize_id"]),
-            "prize_name": r["prize_name"],
-            "prize_cost": int(r["prize_cost"]),
-            "created_at": int(r["created_at"]),
-        })
+    items = [{
+        "prize_id": int(r[0]),
+        "prize_name": r[1],
+        "prize_cost": int(r[2]),
+        "created_at": int(r[3]),
+    } for r in rows]
     return {"items": items}
 
 
 @app.post("/spin")
 def spin(req: SpinReq):
     uid = extract_tg_user_id(req.initData)
-    bal = get_or_create_user(uid)
-
     cost = int(req.cost or 25)
     if cost not in (25, 50):
         raise HTTPException(status_code=400, detail="bad cost")
-
-    if bal < cost:
-        raise HTTPException(status_code=402, detail="not enough balance")
-
-    new_balance = bal - cost
-    set_balance(uid, new_balance)
 
     prize = random.choices(PRIZES, weights=[p["weight"] for p in PRIZES], k=1)[0]
     spin_id = str(uuid.uuid4())
     now = int(time.time())
 
-    con = db()
-    con.execute(
-        "INSERT INTO spins (spin_id, tg_user_id, bet_cost, prize_id, prize_name, prize_cost, status, created_at) "
-        "VALUES (?,?,?,?,?,?,?,?)",
-        (spin_id, uid, cost, int(prize["id"]), str(prize["name"]), int(prize["cost"]), "pending", now)
-    )
-    con.commit()
-    con.close()
+    with pool.connection() as con:
+        with con.cursor() as cur:
+            get_or_create_user(cur, uid)
+
+            # атомарное списание + возврат нового баланса
+            cur.execute(
+                "UPDATE users SET balance = balance - %s "
+                "WHERE tg_user_id=%s AND balance >= %s "
+                "RETURNING balance",
+                (cost, uid, cost),
+            )
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=402, detail="not enough balance")
+            new_balance = int(row[0])
+
+            cur.execute(
+                "INSERT INTO spins (spin_id, tg_user_id, bet_cost, prize_id, prize_name, prize_cost, status, created_at) "
+                "VALUES (%s,%s,%s,%s,%s,%s,'pending',%s)",
+                (spin_id, uid, cost, int(prize["id"]), str(prize["name"]), int(prize["cost"]), now),
+            )
+
+        con.commit()
 
     return {
         "spin_id": spin_id,
@@ -341,157 +323,34 @@ def spin(req: SpinReq):
 @app.post("/claim")
 def claim(req: ClaimReq):
     uid = extract_tg_user_id(req.initData)
-    get_or_create_user(uid)
 
-    con = db()
-    cur = con.cursor()
+    with pool.connection() as con:
+        with con.cursor() as cur:
+            get_or_create_user(cur, uid)
 
-    cur.execute(
-        "SELECT spin_id, tg_user_id, prize_id, prize_name, prize_cost, status "
-        "FROM spins WHERE spin_id=? AND tg_user_id=?",
-        (req.spin_id, uid)
-    )
-    row = cur.fetchone()
-    if not row:
-        con.close()
-        raise HTTPException(status_code=404, detail="spin not found")
-
-    status = row["status"]
-    prize_id = int(row["prize_id"])
-    prize_name = str(row["prize_name"])
-    prize_cost = int(row["prize_cost"])
-
-    if status in ("sold", "kept"):
-        con.close()
-        bal = get_or_create_user(uid)
-        return {"ok": True, "status": status, "balance": int(bal)}
-
-    if req.action == "sell":
-        bal = get_or_create_user(uid)
-        new_balance = bal + prize_cost
-        set_balance(uid, new_balance)
-        cur.execute("UPDATE spins SET status='sold' WHERE spin_id=?", (req.spin_id,))
-        con.commit()
-        con.close()
-        return {"ok": True, "status": "sold", "balance": int(new_balance), "credited": int(prize_cost)}
-
-    add_to_inventory(uid, prize_id, prize_name, prize_cost)
-    cur.execute("UPDATE spins SET status='kept' WHERE spin_id=?", (req.spin_id,))
-    con.commit()
-    con.close()
-
-    bal = get_or_create_user(uid)
-    return {"ok": True, "status": "kept", "balance": int(bal)}
-
-
-# =========================
-# Telegram Stars Top-up
-# =========================
-
-@app.post("/topup/create")
-def topup_create(req: TopupCreateReq):
-    """
-    Создаем invoice link на XTR (Telegram Stars).
-    На фронте откроем tg.openInvoice(invoice_link).
-    """
-    uid = extract_tg_user_id(req.initData)
-
-    stars = int(req.stars or 0)
-    if stars < 1 or stars > 10000:
-        raise HTTPException(status_code=400, detail="bad stars amount")
-
-    get_or_create_user(uid)
-
-    payload = f"topup:{uid}:{uuid.uuid4()}"
-    now = int(time.time())
-
-    con = db()
-    try:
-        con.execute(
-            "INSERT INTO topups (tg_user_id, payload, stars_amount, status, created_at) VALUES (?,?,?,?,?)",
-            (uid, payload, stars, "created", now)
-        )
-        con.commit()
-    finally:
-        con.close()
-
-    # Важно: для Stars валюта XTR; provider_token для цифровых товаров не нужен
-    invoice_link = tg_api("createInvoiceLink", {
-        "title": "Пополнение баланса",
-        "description": f"+{stars} ⭐ в игре",
-        "payload": payload,
-        "currency": "XTR",
-        "prices": [{"label": f"+{stars} ⭐", "amount": stars}],
-    })
-
-    return {"invoice_link": invoice_link, "payload": payload}
-
-
-@app.post("/tg/webhook")
-async def tg_webhook(request: Request):
-    """
-    Webhook Telegram Bot API:
-    - pre_checkout_query => answerPreCheckoutQuery(ok=true)
-    - successful_payment => начисление баланса
-    """
-    if TG_WEBHOOK_SECRET:
-        got = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
-        if got != TG_WEBHOOK_SECRET:
-            raise HTTPException(status_code=401, detail="bad webhook secret")
-
-    update = await request.json()
-
-    # 1) Pre-checkout: надо ответить, иначе транзакция отменится
-    if "pre_checkout_query" in update:
-        q = update["pre_checkout_query"]
-        tg_api("answerPreCheckoutQuery", {
-            "pre_checkout_query_id": q["id"],
-            "ok": True
-        })
-        return {"ok": True}
-
-    # 2) Successful payment: начисляем
-    msg = update.get("message") or {}
-    sp = msg.get("successful_payment")
-    if sp:
-        currency = sp.get("currency")
-        total_amount = int(sp.get("total_amount", 0))
-        invoice_payload = sp.get("invoice_payload", "")
-        telegram_charge_id = sp.get("telegram_payment_charge_id")
-
-        # Stars идут как XTR
-        if currency != "XTR":
-            return {"ok": True}
-
-        con = db()
-        try:
-            row = con.execute(
-                "SELECT tg_user_id, stars_amount, status FROM topups WHERE payload=?",
-                (invoice_payload,)
-            ).fetchone()
-            if not row:
-                return {"ok": True}
-
-            if row["status"] == "paid":
-                return {"ok": True}
-
-            uid = row["tg_user_id"]
-            expected = int(row["stars_amount"])
-
-            # Для XTR ожидаем целое число Stars
-            if total_amount != expected:
-                return {"ok": True}
-
-            # начисляем + отмечаем как paid (идемпотентно)
-            con.execute("UPDATE users SET balance = balance + ? WHERE tg_user_id=?", (expected, uid))
-            con.execute(
-                "UPDATE topups SET status='paid', telegram_charge_id=?, paid_at=? WHERE payload=?",
-                (telegram_charge_id, int(time.time()), invoice_payload)
+            # блокируем запись спина на время обработки
+            cur.execute(
+                "SELECT prize_id, prize_name, prize_cost, status "
+                "FROM spins WHERE spin_id=%s AND tg_user_id=%s FOR UPDATE",
+                (req.spin_id, uid),
             )
-            con.commit()
-        finally:
-            con.close()
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="spin not found")
 
-        return {"ok": True}
+            prize_id, prize_name, prize_cost, status = int(row[0]), str(row[1]), int(row[2]), str(row[3])
 
-    return {"ok": True}
+            # идемпотентность
+            if status in ("sold", "kept"):
+                cur.execute("SELECT balance FROM users WHERE tg_user_id=%s", (uid,))
+                bal = int(cur.fetchone()[0])
+                con.commit()
+                return {"ok": True, "status": status, "balance": bal}
+
+            if req.action == "sell":
+                cur.execute(
+                    "UPDATE users SET balance = balance + %s WHERE tg_user_id=%s RETURNING balance",
+                    (prize_cost, uid),
+                )
+                bal = int(cur.fetchone()[0])
+                cur.execute("UPDATE spins SET status='sold' WH
