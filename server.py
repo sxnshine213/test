@@ -16,11 +16,9 @@ from pydantic import BaseModel
 
 app = FastAPI()
 
-# === CORS ===
-# На проде лучше поставить конкретный домен фронта вместо "*"
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # на проде лучше указать домен фронта
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -29,16 +27,10 @@ app.add_middleware(
 DB_PATH = os.environ.get("DB_PATH", "db.sqlite3")
 START_BALANCE = int(os.environ.get("START_BALANCE", "200"))
 
-# Если задан TG_BOT_TOKEN — initData будет строго проверяться
 TG_BOT_TOKEN = os.environ.get("TG_BOT_TOKEN", "").strip()
-
-# Для локальных тестов в браузере можно разрешить guest
 ALLOW_GUEST = os.environ.get("ALLOW_GUEST", "1").strip() in ("1", "true", "True", "yes", "YES")
-
-# Максимальная "свежесть" initData (сек). Telegram присылает auth_date.
 INITDATA_MAX_AGE_SEC = int(os.environ.get("INITDATA_MAX_AGE_SEC", str(24 * 3600)))
 
-# Должно совпадать с карточками на фронте (есть id=5)
 PRIZES = [
     {"id": 1, "name": "❤️ Сердце", "cost": 15, "weight": 50},
     {"id": 2, "name": "🧸 Мишка", "cost": 25, "weight": 25},
@@ -74,8 +66,6 @@ class PendingReq(BaseModel):
 def db() -> sqlite3.Connection:
     con = sqlite3.connect(DB_PATH, check_same_thread=False)
     con.row_factory = sqlite3.Row
-
-    # Чуть более “боевой” режим SQLite
     con.execute("PRAGMA foreign_keys=ON")
     con.execute("PRAGMA journal_mode=WAL")
     con.execute("PRAGMA synchronous=NORMAL")
@@ -104,8 +94,7 @@ def init_db():
         prize_name TEXT NOT NULL,
         prize_cost INTEGER NOT NULL,
         status TEXT NOT NULL,            -- pending/sold/kept
-        created_at INTEGER NOT NULL,
-        FOREIGN KEY (tg_user_id) REFERENCES users(tg_user_id) ON DELETE CASCADE
+        created_at INTEGER NOT NULL
       )
     """)
 
@@ -116,8 +105,7 @@ def init_db():
         prize_id INTEGER NOT NULL,
         prize_name TEXT NOT NULL,
         prize_cost INTEGER NOT NULL,
-        created_at INTEGER NOT NULL,
-        FOREIGN KEY (tg_user_id) REFERENCES users(tg_user_id) ON DELETE CASCADE
+        created_at INTEGER NOT NULL
       )
     """)
 
@@ -136,12 +124,7 @@ def _parse_init_data(init_data: str) -> dict:
     return dict(parse_qsl(init_data, keep_blank_values=True))
 
 
-def _verify_init_data(init_data: str) -> Optional[str]:
-    """
-    Возвращает tg_user_id если ок.
-    Если init_data пустой — может вернуть "guest" (если ALLOW_GUEST).
-    Если TG_BOT_TOKEN не задан — проверка подписи пропускается (но это небезопасно).
-    """
+def _verify_init_data(init_data: str) -> str:
     if not init_data:
         if ALLOW_GUEST:
             return "guest"
@@ -154,4 +137,229 @@ def _verify_init_data(init_data: str) -> Optional[str]:
             return "guest"
         raise HTTPException(status_code=401, detail="no user in initData")
 
-    # Если нет токена — работаем “как раньше”,
+    # Если токен не задан — пропускаем проверку (НЕ безопасно для прода)
+    if not TG_BOT_TOKEN:
+        try:
+            user = json.loads(user_json)
+            return str(user.get("id", "guest"))
+        except Exception:
+            if ALLOW_GUEST:
+                return "guest"
+            raise HTTPException(status_code=401, detail="bad initData")
+
+    their_hash = data.get("hash")
+    if not their_hash:
+        raise HTTPException(status_code=401, detail="initData hash missing")
+
+    try:
+        auth_date = int(data.get("auth_date", "0"))
+    except Exception:
+        auth_date = 0
+
+    now = int(time.time())
+    if not auth_date or abs(now - auth_date) > INITDATA_MAX_AGE_SEC:
+        raise HTTPException(status_code=401, detail="initData expired")
+
+    pairs = []
+    for k in sorted(data.keys()):
+        if k == "hash":
+            continue
+        pairs.append(f"{k}={data[k]}")
+    data_check_string = "\n".join(pairs)
+
+    secret_key = hashlib.sha256(TG_BOT_TOKEN.encode("utf-8")).digest()
+    calc_hash = hmac.new(secret_key, data_check_string.encode("utf-8"), hashlib.sha256).hexdigest()
+
+    if not hmac.compare_digest(calc_hash, their_hash):
+        raise HTTPException(status_code=401, detail="initData invalid")
+
+    try:
+        user = json.loads(user_json)
+        return str(user.get("id"))
+    except Exception:
+        raise HTTPException(status_code=401, detail="bad user json")
+
+
+def get_or_create_user(con: sqlite3.Connection, tg_user_id: str) -> int:
+    row = con.execute("SELECT balance FROM users WHERE tg_user_id=?", (tg_user_id,)).fetchone()
+    if row:
+        return int(row["balance"])
+    con.execute(
+        "INSERT INTO users (tg_user_id, balance, created_at) VALUES (?,?,?)",
+        (tg_user_id, START_BALANCE, int(time.time()))
+    )
+    return START_BALANCE
+
+
+def add_to_inventory(con: sqlite3.Connection, tg_user_id: str, prize_id: int, prize_name: str, prize_cost: int):
+    con.execute(
+        "INSERT INTO inventory (tg_user_id, prize_id, prize_name, prize_cost, created_at) VALUES (?,?,?,?,?)",
+        (tg_user_id, int(prize_id), str(prize_name), int(prize_cost), int(time.time()))
+    )
+
+
+@app.get("/")
+def root():
+    return {"ok": True}
+
+
+@app.post("/me")
+def me(req: MeReq):
+    uid = _verify_init_data(req.initData)
+    con = db()
+    try:
+        with con:
+            bal = get_or_create_user(con, uid)
+        return {"tg_user_id": uid, "balance": int(bal)}
+    finally:
+        con.close()
+
+
+@app.post("/inventory")
+def inventory(req: InventoryReq):
+    uid = _verify_init_data(req.initData)
+    con = db()
+    try:
+        with con:
+            get_or_create_user(con, uid)
+            rows = con.execute(
+                "SELECT prize_id, prize_name, prize_cost, created_at "
+                "FROM inventory WHERE tg_user_id=? ORDER BY created_at DESC LIMIT 200",
+                (uid,)
+            ).fetchall()
+        return {
+            "items": [{
+                "prize_id": int(r["prize_id"]),
+                "prize_name": r["prize_name"],
+                "prize_cost": int(r["prize_cost"]),
+                "created_at": int(r["created_at"]),
+            } for r in rows]
+        }
+    finally:
+        con.close()
+
+
+@app.post("/pending")
+def pending(req: PendingReq):
+    uid = _verify_init_data(req.initData)
+    con = db()
+    try:
+        with con:
+            get_or_create_user(con, uid)
+            row = con.execute(
+                "SELECT spin_id, prize_id, prize_name, prize_cost, bet_cost, created_at "
+                "FROM spins WHERE tg_user_id=? AND status='pending' ORDER BY created_at DESC LIMIT 1",
+                (uid,)
+            ).fetchone()
+        if not row:
+            return {"pending": None}
+        return {"pending": {
+            "spin_id": row["spin_id"],
+            "id": int(row["prize_id"]),
+            "name": row["prize_name"],
+            "cost": int(row["prize_cost"]),
+            "bet_cost": int(row["bet_cost"]),
+            "created_at": int(row["created_at"]),
+        }}
+    finally:
+        con.close()
+
+
+@app.post("/spin")
+def spin(req: SpinReq):
+    uid = _verify_init_data(req.initData)
+    cost = int(req.cost or 25)
+    if cost not in (25, 50):
+        raise HTTPException(status_code=400, detail="bad cost")
+
+    con = db()
+    try:
+        with con:
+            get_or_create_user(con, uid)
+
+            # запрет нового спина если есть pending
+            pending_row = con.execute(
+                "SELECT spin_id, prize_id, prize_name, prize_cost "
+                "FROM spins WHERE tg_user_id=? AND status='pending' ORDER BY created_at DESC LIMIT 1",
+                (uid,)
+            ).fetchone()
+            if pending_row:
+                bal = con.execute("SELECT balance FROM users WHERE tg_user_id=?", (uid,)).fetchone()
+                return {
+                    "spin_id": pending_row["spin_id"],
+                    "id": int(pending_row["prize_id"]),
+                    "name": str(pending_row["prize_name"]),
+                    "cost": int(pending_row["prize_cost"]),
+                    "balance": int(bal["balance"]) if bal else START_BALANCE,
+                    "already_pending": True
+                }
+
+            # атомарно списываем
+            cur = con.execute(
+                "UPDATE users SET balance = balance - ? WHERE tg_user_id=? AND balance >= ?",
+                (cost, uid, cost)
+            )
+            if cur.rowcount != 1:
+                raise HTTPException(status_code=402, detail="not enough balance")
+
+            prize = random.choices(PRIZES, weights=[p["weight"] for p in PRIZES], k=1)[0]
+            spin_id = str(uuid.uuid4())
+            now = int(time.time())
+
+            con.execute(
+                "INSERT INTO spins (spin_id, tg_user_id, bet_cost, prize_id, prize_name, prize_cost, status, created_at) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                (spin_id, uid, cost, int(prize["id"]), str(prize["name"]), int(prize["cost"]), "pending", now)
+            )
+
+            bal = con.execute("SELECT balance FROM users WHERE tg_user_id=?", (uid,)).fetchone()
+
+        return {
+            "spin_id": spin_id,
+            "id": int(prize["id"]),
+            "name": str(prize["name"]),
+            "cost": int(prize["cost"]),
+            "balance": int(bal["balance"]) if bal else 0,
+        }
+    finally:
+        con.close()
+
+
+@app.post("/claim")
+def claim(req: ClaimReq):
+    uid = _verify_init_data(req.initData)
+    con = db()
+    try:
+        with con:
+            get_or_create_user(con, uid)
+
+            row = con.execute(
+                "SELECT spin_id, tg_user_id, prize_id, prize_name, prize_cost, status "
+                "FROM spins WHERE spin_id=? AND tg_user_id=?",
+                (req.spin_id, uid)
+            ).fetchone()
+
+            if not row:
+                raise HTTPException(status_code=404, detail="spin not found")
+
+            status = row["status"]
+            prize_id = int(row["prize_id"])
+            prize_name = str(row["prize_name"])
+            prize_cost = int(row["prize_cost"])
+
+            if status in ("sold", "kept"):
+                bal = con.execute("SELECT balance FROM users WHERE tg_user_id=?", (uid,)).fetchone()
+                return {"ok": True, "status": status, "balance": int(bal["balance"]) if bal else 0}
+
+            if req.action == "sell":
+                con.execute("UPDATE users SET balance = balance + ? WHERE tg_user_id=?", (prize_cost, uid))
+                con.execute("UPDATE spins SET status='sold' WHERE spin_id=?", (req.spin_id,))
+                bal = con.execute("SELECT balance FROM users WHERE tg_user_id=?", (uid,)).fetchone()
+                return {"ok": True, "status": "sold", "balance": int(bal["balance"]) if bal else 0, "credited": int(prize_cost)}
+
+            add_to_inventory(con, uid, prize_id, prize_name, prize_cost)
+            con.execute("UPDATE spins SET status='kept' WHERE spin_id=?", (req.spin_id,))
+            bal = con.execute("SELECT balance FROM users WHERE tg_user_id=?", (uid,)).fetchone()
+            return {"ok": True, "status": "kept", "balance": int(bal["balance"]) if bal else 0}
+    finally:
+        con.close()
