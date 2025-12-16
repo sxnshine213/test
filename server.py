@@ -29,9 +29,25 @@ def root():
 
 @app.post("/spin")
 def spin(req: SpinReq):
-    prize = random.choices(
-        PRIZES,
-        weights=[p["weight"] for p in PRIZES],
-        k=1
-    )[0]
-    return prize
+    uid = extract_tg_user_id(req.initData)
+    bal = get_or_create_user(uid)
+
+    cost = int(req.cost or 25)
+    if cost not in (25, 50):
+        raise HTTPException(status_code=400, detail="bad cost")
+
+    if bal < cost:
+        raise HTTPException(status_code=402, detail="not enough balance")
+
+    # 🔴 СПИСЫВАЕМ БАЛАНС
+    new_balance = bal - cost
+    set_balance(uid, new_balance)
+
+    prize = random.choices(PRIZES, weights=[p["weight"] for p in PRIZES], k=1)[0]
+
+    return {
+        "id": prize["id"],
+        "name": prize["name"],
+        "cost": prize["cost"],
+        "balance": new_balance   # ← ВАЖНО
+    }
