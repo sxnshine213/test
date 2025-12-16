@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Admin • Roulette</title>
+  <style>
+    body{margin:0;font-family:Inter,Arial,sans-serif;background:#0b1320;color:#fff}
+    .wrap{max-width:1100px;margin:0 auto;padding:18px}
+    .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+    .card{background:#162235;border-radius:14px;padding:14px;margin-top:12px}
+    input,button{border-radius:12px;border:1px solid #1f324a;background:#0b1320;color:#fff;padding:10px 12px}
+    button{cursor:pointer;border:0;background:#5b8ecb;font-weight:900}
+    button.secondary{background:#1f324a}
+    table{width:100%;border-collapse:collapse;margin-top:10px;font-size:13px}
+    th,td{padding:10px;border-bottom:1px solid #1f324a;vertical-align:top}
+    th{opacity:.8;text-align:left}
+    .muted{opacity:.75}
+    .pill{display:inline-block;padding:4px 8px;border-radius:999px;background:#0b1320;border:1px solid #1f324a;font-size:12px}
+    .ok{color:#7CFC90}
+    .bad{color:#ff7b7b}
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h2 style="margin:0 0 10px 0;">🛠️ Admin</h2>
+
+  <div class="card">
+    <div class="row">
+      <div class="muted">API:</div>
+      <input id="apiBase" style="min-width:340px;flex:1" placeholder="https://test-u2mr.onrender.com"/>
+      <div class="muted">ADMIN KEY:</div>
+      <input id="adminKey" style="min-width:260px;flex:1" placeholder="вставь ключ"/>
+      <button id="saveCfg">Сохранить</button>
+      <button class="secondary" id="loadStats">Обновить статистику</button>
+    </div>
+    <div id="cfgHint" class="muted" style="margin-top:10px;">
+      Ключ отправляется в заголовке <span class="pill">X-Admin-Key</span>. Не публикуй admin.html с ключом внутри.
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="justify-content:space-between;">
+      <div style="font-weight:900;">📊 Статистика</div>
+      <div id="statsStatus" class="muted"></div>
+    </div>
+    <div id="statsBox" class="row" style="margin-top:10px;gap:12px;"></div>
+  </div>
+
+  <div class="card">
+    <div style="font-weight:900;">👤 Пользователь</div>
+    <div class="row" style="margin-top:10px;">
+      <input id="userId" placeholder="tg_user_id (число)" style="min-width:240px;"/>
+      <button id="loadUser">Загрузить</button>
+      <input id="delta" placeholder="delta (+100 / -50)" style="width:160px"/>
+      <button class="secondary" id="applyDelta">Изменить баланс</button>
+      <div id="userStatus" class="muted"></div>
+    </div>
+    <div id="userBox" class="muted" style="margin-top:10px;"></div>
+    <div id="userTables"></div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="justify-content:space-between;">
+      <div style="font-weight:900;">💳 Topups</div>
+      <button class="secondary" id="loadTopups">Обновить</button>
+    </div>
+    <div id="topupsBox"></div>
+  </div>
+</div>
+
+<script>
+  const apiBaseEl = document.getElementById('apiBase');
+  const adminKeyEl = document.getElementById('adminKey');
+
+  const statsBox = document.getElementById('statsBox');
+  const statsStatus = document.getElementById('statsStatus');
+
+  const userIdEl = document.getElementById('userId');
+  const deltaEl = document.getElementById('delta');
+  const userStatus = document.getElementById('userStatus');
+  const userBox = document.getElementById('userBox');
+  const userTables = document.getElementById('userTables');
+
+  const topupsBox = document.getElementById('topupsBox');
+
+  function loadCfg() {
+    apiBaseEl.value = localStorage.getItem('admin_api_base') || 'https://test-u2mr.onrender.com';
+    adminKeyEl.value = localStorage.getItem('admin_key') || '';
+  }
+
+  function saveCfg() {
+    localStorage.setItem('admin_api_base', apiBaseEl.value.trim());
+    localStorage.setItem('admin_key', adminKeyEl.value.trim());
+  }
+
+  function fmtTime(ts) {
+    if (!ts) return '';
+    try { return new Date(ts * 1000).toLocaleString(); } catch (_) { return String(ts); }
+  }
+
+  async function api(path, opts={}) {
+    const base = apiBaseEl.value.trim().replace(/\/$/, '');
+    const key = adminKeyEl.value.trim();
+    const res = await fetch(base + path, {
+      ...opts,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Admin-Key': key,
+        ...(opts.headers || {})
+      }
+    });
+    const text = await res.text();
+    let data = null;
+    try { data = text ? JSON.parse(text) : null; } catch (_) { data = text; }
+    if (!res.ok) throw new Error(`HTTP ${res.status}: ${typeof data === 'string' ? data : JSON.stringify(data)}`);
+    return data;
+  }
+
+  function statCard(title, value) {
+    const div = document.createElement('div');
+    div.className = 'pill';
+    div.style.padding = '10px 12px';
+    div.innerHTML = `<div class="muted" style="font-size:12px">${title}</div><div style="font-weight:900;font-size:16px;margin-top:4px">${value}</div>`;
+    return div;
+  }
+
+  async function loadStats() {
+    statsStatus.textContent = 'загрузка...';
+    statsBox.innerHTML = '';
+    try {
+      const s = await api('/admin/stats');
+      statsBox.appendChild(statCard('Users', s.users));
+      statsBox.appendChild(statCard('Total balance', s.total_balance));
+      statsBox.appendChild(statCard('Spins total', s.spins_total));
+      statsBox.appendChild(statCard('Spins 24h', s.spins_24h));
+      statsBox.appendChild(statCard('Topups total', s.topups_total));
+      statsBox.appendChild(statCard('Topups 24h', s.topups_24h));
+      statsBox.appendChild(statCard('Paid stars total', s.paid_stars_total));
+      statsBox.appendChild(statCard('Paid stars 24h', s.paid_stars_24h));
+      statsStatus.innerHTML = `<span class="ok">OK</span> • ${new Date().toLocaleTimeString()}`;
+    } catch (e) {
+      statsStatus.innerHTML = `<span class="bad">ERR</span> • ${e.message}`;
+    }
+  }
+
+  function renderTable(title, cols, rows) {
+    const wrap = document.createElement('div');
+    wrap.className = 'card';
+    wrap.style.marginTop = '12px';
+    wrap.style.background = '#0f1a2b';
+
+    const h = document.createElement('div');
+    h.style.fontWeight = '900';
+    h.textContent = title;
+
+    const t = document.createElement('table');
+    const thead = document.createElement('thead');
+    const trh = document.createElement('tr');
+    cols.forEach(c => {
+      const th = document.createElement('th');
+      th.textContent = c;
+      trh.appendChild(th);
+    });
+    thead.appendChild(trh);
+
+    const tbody = document.createElement('tbody');
+    rows.forEach(r => {
+      const tr = document.createElement('tr');
+      r.forEach(cell => {
+        const td = document.createElement('td');
+        td.textContent = cell ?? '';
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+
+    t.appendChild(thead);
+    t.appendChild(tbody);
+
+    wrap.appendChild(h);
+    wrap.appendChild(t);
+    return wrap;
+  }
+
+  async function loadUser() {
+    const uid = userIdEl.value.trim();
+    if (!uid) return;
+
+    userStatus.textContent = 'загрузка...';
+    userBox.textContent = '';
+    userTables.innerHTML = '';
+
+    try {
+      const d = await api('/admin/user/' + encodeURIComponent(uid));
+
+      userBox.innerHTML = `
+        <div><span class="pill">tg_user_id</span> <b>${d.user.tg_user_id}</b></div>
+        <div style="margin-top:6px;"><span class="pill">balance</span> <b>${d.user.balance}</b></div>
+        <div style="margin-top:6px;"><span class="pill">created</span> ${fmtTime(d.user.created_at)}</div>
+      `;
+
+      const spinsRows = (d.spins || []).map(s => [
+        s.created_at ? fmtTime(s.created_at) : '',
+        s.spin_id,
+        `${s.bet_cost}`,
+        `${s.prize_name} (${s.prize_cost})`,
+        s.status
+      ]);
+      userTables.appendChild(renderTable('Spins (last 30)', ['time','spin_id','bet','prize','status'], spinsRows));
+
+      const invRows = (d.inventory || []).map(i => [
+        i.created_at ? fmtTime(i.created_at) : '',
+        `${i.prize_name}`,
+        `${i.prize_cost}`
+      ]);
+      userTables.appendChild(renderTable('Inventory (last 30)', ['time','item','cost'], invRows));
+
+      const topRows = (d.topups || []).map(t => [
+        fmtTime(t.created_at),
+        `${t.stars_amount}`,
+        t.status,
+        t.paid_at ? fmtTime(t.paid_at) : ''
+      ]);
+      userTables.appendChild(renderTable('Topups (last 30)', ['created','stars','status','paid_at'], topRows));
+
+      userStatus.innerHTML = `<span class="ok">OK</span>`;
+    } catch (e) {
+      userStatus.innerHTML = `<span class="bad">ERR</span> • ${e.message}`;
+    }
+  }
+
+  async function applyDelta() {
+    const uid = userIdEl.value.trim();
+    const delta = parseInt(deltaEl.value.trim(), 10);
+    if (!uid || !Number.isFinite(delta)) {
+      alert('Укажи tg_user_id и delta (число).');
+      return;
+    }
+    userStatus.textContent = 'применяю...';
+    try {
+      const res = await api('/admin/adjust_balance', {
+        method: 'POST',
+        body: JSON.stringify({ tg_user_id: uid, delta })
+      });
+      userStatus.innerHTML = `<span class="ok">OK</span> • new balance: ${res.balance}`;
+      await loadUser();
+      await loadStats();
+    } catch (e) {
+      userStatus.innerHTML = `<span class="bad">ERR</span> • ${e.message}`;
+    }
+  }
+
+  async function loadTopups() {
+    topupsBox.innerHTML = '<div class="muted">загрузка...</div>';
+    try {
+      const d = await api('/admin/topups?limit=80');
+      const rows = (d.items || []).map(t => ([
+        fmtTime(t.created_at),
+        t.tg_user_id,
+        String(t.stars_amount),
+        t.status,
+        t.paid_at ? fmtTime(t.paid_at) : '',
+      ]));
+      topupsBox.innerHTML = '';
+      topupsBox.appendChild(renderTable('Topups (last 80)', ['created','user','stars','status','paid_at'], rows));
+    } catch (e) {
+      topupsBox.innerHTML = `<div class="bad">ERR: ${e.message}</div>`;
+    }
+  }
+
+  document.getElementById('saveCfg').onclick = () => { saveCfg(); loadStats(); };
+  document.getElementById('loadStats').onclick = loadStats;
+  document.getElementById('loadUser').onclick = loadUser;
+  document.getElementById('applyDelta').onclick = applyDelta;
+  document.getElementById('loadTopups').onclick = loadTopups;
+
+  loadCfg();
+  loadStats();
+  loadTopups();
+</script>
+</body>
+</html>
