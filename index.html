@@ -78,23 +78,7 @@
       transform: translateY(-2px) scale(1.03);
       box-shadow: 0 0 0 2px rgba(74,163,255,0.35), 0 0 22px rgba(74,163,255,0.25);
     }
-    .media-slot {
-      width: 56px;
-      height: 56px;
-      margin: 0 auto;
-      border-radius: 14px;
-      background: rgba(255,255,255,0.06);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      overflow: hidden;
-    }
-    .media-img, .media-video {
-      width: 56px;
-      height: 56px;
-      object-fit: contain;
-      display: block;
-    }
+    .item img { width: 56px; height: 56px; }
     .price {
       margin-top: 6px;
       font-size: 12px;
@@ -136,53 +120,6 @@
       opacity: 0.85;
     }
 
-    /* Recent wins */
-    .recent {
-      background: radial-gradient(circle at center, #18263c, #0f1a2b);
-      border-radius: 20px;
-      padding: 12px 12px 10px;
-    }
-    .recent-head{
-      display:flex; align-items:center; justify-content:space-between; gap:10px;
-      font-weight: 900; font-size: 13px; opacity: .95;
-      margin-bottom: 10px;
-    }
-    .recent-list{
-      display:flex;
-      gap:10px;
-      overflow-x:auto;
-      padding-bottom: 2px;
-      scrollbar-width: none;
-      -webkit-overflow-scrolling: touch;
-    }
-    .recent-list::-webkit-scrollbar{display:none;}
-    .recent-item{
-      flex: 0 0 auto;
-      display:flex;
-      gap:10px;
-      align-items:center;
-      background:#162235;
-      border-radius:14px;
-      padding:10px 10px;
-      min-width: 240px;
-    }
-    .rw-avatar{
-      width:34px;height:34px;border-radius:50%;object-fit:cover;
-      background: rgba(255,255,255,0.12);
-      display:flex;align-items:center;justify-content:center;
-      font-size:12px;font-weight:900;flex:0 0 auto;
-    }
-    .rw-meta{display:flex;flex-direction:column;gap:2px;min-width:0;}
-    .rw-name{font-size:12px;font-weight:900;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:140px;}
-    .rw-prize{font-size:11px;opacity:.8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:160px;}
-    .rw-icon{
-      width:34px;height:34px;border-radius:12px;
-      background: rgba(255,255,255,0.06);
-      display:flex;align-items:center;justify-content:center;
-      overflow:hidden;flex:0 0 auto;
-    }
-    .rw-icon .media-img, .rw-icon .media-video{width:34px;height:34px;}
-
     /* Inventory / Top common */
     .inv {
       background: radial-gradient(circle at center, #18263c, #0f1a2b);
@@ -208,14 +145,12 @@
       gap: 10px;
       align-items: center;
     }
-    .inv-icon { width:34px; height:34px; border-radius:12px; background: rgba(255,255,255,0.06); display:flex; align-items:center; justify-content:center; overflow:hidden; flex:0 0 auto; }
-    .inv-icon .media-img, .inv-icon .media-video { width:34px; height:34px; }
-
+    .inv-card img { width: 34px; height: 34px; }
     .lb-avatar{width:34px;height:34px;border-radius:50%;object-fit:cover;background: rgba(255,255,255,0.12);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:900;flex:0 0 auto;}
     .lb-avatar--ph{color: rgba(255,255,255,0.9);}
 
-    .inv-meta { display: flex; flex-direction: column; gap: 2px; min-width:0; }
-    .inv-name { font-size: 12px; font-weight: 800; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .inv-meta { display: flex; flex-direction: column; gap: 2px; }
+    .inv-name { font-size: 12px; font-weight: 800; }
     .inv-sub { font-size: 11px; opacity: 0.75; }
 
     /* Bottom tabs */
@@ -276,11 +211,7 @@
       background:#162235; cursor:pointer; user-select:none; -webkit-user-select:none;
     }
     .claim-row { display:flex; gap:12px; align-items:center; }
-    .claim-media {
-      width:54px; height:54px; border-radius:14px; background:#162235; padding:6px;
-      display:flex; align-items:center; justify-content:center; overflow:hidden; flex:0 0 auto;
-    }
-    .claim-media .media-img, .claim-media .media-video { width:54px; height:54px; }
+    .claim-row img { width:54px; height:54px; border-radius:14px; background:#162235; padding:6px; }
     .claim-name { font-weight: 900; }
     .claim-meta { font-size:12px; opacity:.8; }
     .claim-actions { display:flex; gap:10px; margin-top:14px; }
@@ -331,12 +262,65 @@
     .topup-buy { background:#5b8ecb; }
     .topup-note { margin-top:10px; font-size:12px; opacity:.7; }
 
-    /* Hide iOS webkit video overlays (play icon) */
-    .media-video, .prize-video { pointer-events: none; }
-    video::-webkit-media-controls { display:none !important; }
-    video::-webkit-media-controls-panel { display:none !important; }
-    video::-webkit-media-controls-start-playback-button { display:none !important; }
-    video::-webkit-media-controls-play-button { display:none !important; }
+    /* Recent wins */
+    .recent-wins{
+      margin: 10px 0 0;
+      padding: 10px 10px;
+      border-radius: 14px;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.08);
+    }
+    .recent-wins__title{
+      font-size: 12px;
+      opacity: .75;
+      margin-bottom: 8px;
+      font-weight: 800;
+    }
+    .recent-wins__list{
+      display: flex;
+      gap: 10px;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: none;
+    }
+    .recent-wins__list::-webkit-scrollbar{ display:none; }
+    .recent-win{
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px;
+      border-radius: 999px;
+      background: rgba(0,0,0,0.25);
+      border: 1px solid rgba(255,255,255,0.08);
+      white-space: nowrap;
+      flex: 0 0 auto;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    .recent-win__avatar{
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      object-fit: cover;
+      background: rgba(255,255,255,0.12);
+      display: block;
+      flex: 0 0 auto;
+    }
+    .recent-win__avatar--ph{
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      font-size: 11px;
+      font-weight: 900;
+      color: rgba(255,255,255,0.9);
+    }
+    .recent-win__meta{display:flex;flex-direction:column;gap:2px;line-height:1.05;}
+    .recent-win__name{font-size: 13px; max-width: 170px; overflow: hidden; text-overflow: ellipsis;}
+    .recent-win__prize{font-size: 11px; opacity: .75; max-width: 170px; overflow: hidden; text-overflow: ellipsis; display:flex; align-items:center;}
+
+  
+    .recent-win__prize-icon{width:14px;height:14px;border-radius:3px;object-fit:cover;margin-right:6px;vertical-align:middle;}
+
   </style>
 </head>
 
@@ -352,15 +336,12 @@
       </div>
     </div>
 
-    <div class="recent" id="recentCard">
-      <div class="recent-head">
-        <div>🔥 Недавние выигрыши</div>
-        <div id="recentStatus" style="font-size:12px;opacity:.7;"></div>
-      </div>
-      <div class="recent-list" id="recentList"></div>
-    </div>
-
     <div id="screenRoulette">
+<div id="recentWins" class="recent-wins" style="display:none;">
+        <div class="recent-wins__title">Недавние выигрыши</div>
+        <div id="recentWinsList" class="recent-wins__list"></div>
+      </div>
+
 
       <div class="tabs">
         <div class="pill active" data-cost="25">25 ⭐</div>
@@ -369,7 +350,11 @@
 
       <div class="roulette-wrap">
         <div class="roulette" id="roulette" data-initialized="false">
-          <!-- items are loaded from /prizes -->
+          <div class="item" data-id="1"><img src="https://emojiapi.dev/api/v1/heart_with_ribbon/128.png"><div class="price">⭐ 15</div></div>
+          <div class="item" data-id="2"><img src="https://emojiapi.dev/api/v1/teddy_bear/128.png"><div class="price">⭐ 25</div></div>
+          <div class="item" data-id="4"><img src="https://emojiapi.dev/api/v1/gem_stone/128.png"><div class="price">⭐ 100</div></div>
+          <div class="item" data-id="3"><img src="https://emojiapi.dev/api/v1/birthday_cake/128.png"><div class="price">⭐ 50</div></div>
+          <div class="item" data-id="5"><img src="https://emojiapi.dev/api/v1/rose/128.png"><div class="price">⭐ 25</div></div>
         </div>
         <div class="pointer"></div>
       </div>
@@ -410,7 +395,7 @@
     </div>
 
     <div class="claim-row">
-      <div id="claimMedia" class="claim-media"></div>
+      <img id="claimImg" src="" alt="prize">
       <div style="display:flex; flex-direction:column; gap:4px;">
         <div id="claimName" class="claim-name">—</div>
         <div id="claimMeta" class="claim-meta">—</div>
@@ -448,7 +433,7 @@
   </div>
 
   <script>
-    const API_BASE = "https://test-u2mr.onrender.com"; // <-- должен указывать на ваш бэкенд
+    const API_BASE = "https://test-u2mr.onrender.com"; // <-- поменяй на свой бекенд при необходимости
 
     const tg = window.Telegram?.WebApp;
     try { tg?.ready(); } catch (_) {}
@@ -456,9 +441,6 @@
     const btn = document.getElementById('spinBtn');
     const roulette = document.getElementById('roulette');
     const balanceBadge = document.getElementById('balanceBadge');
-
-    const recentList = document.getElementById('recentList');
-    const recentStatus = document.getElementById('recentStatus');
 
     const topupBtn = document.getElementById('topupBtn');
     const topupBackdrop = document.getElementById('topupBackdrop');
@@ -487,7 +469,7 @@
     const claimBackdrop = document.getElementById('claimBackdrop');
     const claimSheet = document.getElementById('claimSheet');
     const claimClose = document.getElementById('claimClose');
-    const claimMedia = document.getElementById('claimMedia');
+    const claimImg = document.getElementById('claimImg');
     const claimName = document.getElementById('claimName');
     const claimMeta = document.getElementById('claimMeta');
     const btnSell = document.getElementById('btnSell');
@@ -498,8 +480,6 @@
 
     let pendingSpinId = null;
     let pendingPrize = null;
-
-    const prizeMap = new Map(); // id -> {id,name,cost,icon_url}
 
     pills.forEach(p => p.addEventListener('click', () => {
       pills.forEach(x => x.classList.remove('active'));
@@ -518,82 +498,62 @@
         const text = await res.text();
         throw new Error(`HTTP ${res.status}: ${text}`);
       }
-      return await res.json();
+      const data = await res.json();
+      return data;
     }
 
-    async function apiGet(path) {
-      const res = await fetch(`${API_BASE}${path}`, { method: 'GET' });
-      if (!res.ok) {
-        const text = await res.text();
-        throw new Error(`HTTP ${res.status}: ${text}`);
+
+    // ===== Prizes (icons from backend) =====
+    let PRIZES_BY_ID = {};
+
+    function setPrizes(items) {
+      PRIZES_BY_ID = {};
+      const list = Array.isArray(items) ? items : [];
+      for (const p of list) {
+        if (!p || !p.id) continue;
+        PRIZES_BY_ID[Number(p.id)] = p;
       }
-      return await res.json();
     }
 
-    function isWebm(url) { return /\.webm(\?|$)/i.test(String(url || '')); }
-    function posterFromWebm(url) {
-      if (!url) return '';
-      return String(url).replace(/\.webm(\?.*)?$/i, '.webp$1');
-    }
+    function rebuildRouletteFromPrizes(items) {
+      if (!r) return;
+      const list = Array.isArray(items) ? items : [];
+      if (!list.length) return;
 
-    function fallbackEmojiUrlById(id) {
-      const map = {
-        1: 'https://emojiapi.dev/api/v1/heart_with_ribbon/128.png',
-        2: 'https://emojiapi.dev/api/v1/teddy_bear/128.png',
-        3: 'https://emojiapi.dev/api/v1/birthday_cake/128.png',
-        4: 'https://emojiapi.dev/api/v1/gem_stone/128.png',
-        5: 'https://emojiapi.dev/api/v1/rose/128.png'
-      };
-      return map[id] || map[1];
-    }
+      // Reset infinite-scroll clone state
+      r.dataset.initialized = 'false';
+      r.innerHTML = '';
 
-    function resolveIconUrl(prizeId, iconUrl) {
-      if (iconUrl) return iconUrl;
-      const p = prizeMap.get(Number(prizeId));
-      if (p?.icon_url) return p.icon_url;
-      return fallbackEmojiUrlById(prizeId);
-    }
+      for (const p of list) {
+        const item = document.createElement('div');
+        item.className = 'item';
+        item.dataset.id = String(p.id);
 
-    function mediaHTML(url, cls, posterUrl) {
-      const safeUrl = String(url || '');
-      const poster = posterUrl || (isWebm(safeUrl) ? posterFromWebm(safeUrl) : '');
-      if (isWebm(safeUrl)) {
-        return `<video class="media-video ${cls || ''}" autoplay muted loop playsinline webkit-playsinline preload="auto" disablepictureinpicture controlslist="nodownload noplaybackrate noremoteplayback" ${poster ? `poster="${poster}"` : ''}>
-          <source src="${safeUrl}" type="video/webm">
-        </video>`;
+        const img = document.createElement('img');
+        img.src = (p.icon_url || '').trim() || giftImageById(p.id);
+        img.alt = 'prize';
+        img.referrerPolicy = 'no-referrer';
+
+        const price = document.createElement('div');
+        price.className = 'price';
+        price.textContent = `⭐ ${p.cost ?? ''}`;
+
+        item.appendChild(img);
+        item.appendChild(price);
+        r.appendChild(item);
       }
-      return `<img class="media-img ${cls || ''}" src="${safeUrl}" alt="icon" loading="lazy" decoding="async">`;
     }
 
-    function kickVideos(root=document) {
-      const vids = root.querySelectorAll('video.media-video');
-      vids.forEach(v => {
-        try {
-          v.controls = false;
-          v.removeAttribute('controls');
-          v.muted = true;
-          v.defaultMuted = true;
-          v.loop = true;
-          v.autoplay = true;
-          v.playsInline = true;
-          v.setAttribute('playsinline', '');
-          v.setAttribute('webkit-playsinline', '');
-          v.disablePictureInPicture = true;
-          v.setAttribute('disablepictureinpicture', '');
-          // iOS: попытаться запустить
-          const p = v.play();
-          if (p && typeof p.catch === 'function') p.catch(()=>{});
-        } catch (_) {}
-      });
-    }
-
-    function avatarHTML(url, name, cls='lb-avatar') {
-      const safeName = String(name || '').trim();
-      if (url) {
-        return `<img class="${cls}" src="${url}" alt="avatar" referrerpolicy="no-referrer">`;
+    async function refreshPrizes() {
+      try {
+        const res = await apiPost('/prizes', { initData: tg?.initData || '' });
+        const items = Array.isArray(res?.items) ? res.items : [];
+        setPrizes(items);
+        rebuildRouletteFromPrizes(items);
+      } catch (e) {
+        // keep fallback (hardcoded items) if backend endpoint not available
+        console.warn('refreshPrizes failed', e);
       }
-      const initials = safeName ? safeName.split(/\s+/).slice(0,2).map(s => s[0]?.toUpperCase()).join('') : 'U';
-      return `<div class="${cls} lb-avatar--ph">${initials || 'U'}</div>`;
     }
 
     async function refreshBalance() {
@@ -605,44 +565,104 @@
       }
     }
 
-    async function refreshPrizes() {
-      if (!roulette) return;
-      try {
-        const res = await apiGet('/prizes');
-        const items = Array.isArray(res.items) ? res.items : [];
-        prizeMap.clear();
-        items.forEach(p => prizeMap.set(Number(p.id), p));
+    // ===== Recent wins =====
+    const recentWinsWrap = document.getElementById('recentWins');
+    const recentWinsList = document.getElementById('recentWinsList');
 
-        // render roulette base strip
-        roulette.innerHTML = items.map(p => {
-          const icon = resolveIconUrl(p.id, p.icon_url);
-          return `
-            <div class="item" data-id="${p.id}">
-              <div class="media-slot">${mediaHTML(icon, '', '')}</div>
-              <div class="price">⭐ ${p.cost}</div>
-            </div>
-          `;
-        }).join('');
+    function initialsFromName(name) {
+      const s = (name || '').trim().replace(/^@/, '');
+      if (!s) return 'U';
+      const parts = s.split(/\s+/).filter(Boolean);
+      const a = (parts[0] || '')[0] || 'U';
+      const b = (parts[1] || '')[0] || '';
+      return (a + b).toUpperCase();
+    }
 
-        roulette.dataset.initialized = 'false';
-        initInfiniteRoulette();
-        kickVideos(roulette);
-      } catch (e) {
-        // fallback: показываем дефолтные 5 призов, если /prizes недоступен
-        const fallback = [1,2,4,3,5].map(id => ({
-          id, cost: (id===1?15:id===2?25:id===3?50:id===4?100:25),
-          icon_url: fallbackEmojiUrlById(id)
-        }));
-        roulette.innerHTML = fallback.map(p => `
-          <div class="item" data-id="${p.id}">
-            <div class="media-slot">${mediaHTML(p.icon_url, '', '')}</div>
-            <div class="price">⭐ ${p.cost}</div>
-          </div>
-        `).join('');
-        roulette.dataset.initialized = 'false';
-        initInfiniteRoulette();
-        kickVideos(roulette);
+    function renderRecentWins(items) {
+      if (!recentWinsWrap || !recentWinsList) return;
+
+      const list = Array.isArray(items) ? items : [];
+      if (!list.length) {
+        recentWinsWrap.style.display = 'none';
+        recentWinsList.innerHTML = '';
+        return;
       }
+
+      recentWinsWrap.style.display = '';
+      recentWinsList.innerHTML = '';
+
+      for (const it of list) {
+        const el = document.createElement('div');
+        el.className = 'recent-win';
+
+        let avatarNode;
+        if (it && it.avatar) {
+          const img = document.createElement('img');
+          img.className = 'recent-win__avatar';
+          img.src = it.avatar;
+          img.alt = it.name || 'user';
+          img.referrerPolicy = 'no-referrer';
+          avatarNode = img;
+        } else {
+          const ph = document.createElement('div');
+          ph.className = 'recent-win__avatar recent-win__avatar--ph';
+          ph.textContent = initialsFromName(it?.name);
+          avatarNode = ph;
+        }
+
+        const meta = document.createElement('div');
+        meta.className = 'recent-win__meta';
+
+        const name = document.createElement('div');
+        name.className = 'recent-win__name';
+        name.textContent = it?.name || 'User';
+
+        const prizeText = (it?.prize || it?.prize_name || '').trim();
+        const prizeRow = document.createElement('div');
+        prizeRow.className = 'recent-win__prize';
+        if (it?.icon_url) {
+          const pi = document.createElement('img');
+          pi.className = 'recent-win__prize-icon';
+          pi.src = String(it.icon_url).trim();
+          pi.alt = 'icon';
+          pi.referrerPolicy = 'no-referrer';
+          prizeRow.appendChild(pi);
+        }
+        const pt = document.createElement('span');
+        pt.textContent = prizeText;
+        prizeRow.appendChild(pt);
+
+        meta.appendChild(name);
+        if (prizeText) meta.appendChild(prizeRow);
+
+        el.appendChild(avatarNode);
+        el.appendChild(meta);
+        recentWinsList.appendChild(el);
+      }
+    }
+
+    async function refreshRecentWins() {
+      try {
+        const res = await apiPost('/recent_wins', { initData: tg?.initData || '' });
+        renderRecentWins(res?.items || []);
+      } catch (_) {
+        // silently ignore
+      }
+    }
+
+    function giftImageById(id) {
+      const p = PRIZES_BY_ID && PRIZES_BY_ID[Number(id)];
+      const url = (p && p.icon_url) ? String(p.icon_url).trim() : '';
+      if (url) return url;
+
+      const map = {
+        1: 'https://emojiapi.dev/api/v1/heart_with_ribbon/128.png',
+        2: 'https://emojiapi.dev/api/v1/teddy_bear/128.png',
+        3: 'https://emojiapi.dev/api/v1/birthday_cake/128.png',
+        4: 'https://emojiapi.dev/api/v1/gem_stone/128.png',
+        5: 'https://emojiapi.dev/api/v1/rose/128.png'
+      };
+      return map[id] || map[1];
     }
 
     async function refreshInventory() {
@@ -661,13 +681,13 @@
         inventoryEmpty.style.display = 'none';
         inventoryList.style.display = '';
         inventoryList.innerHTML = items.map(it => {
-          const icon = resolveIconUrl(it.prize_id, it.icon_url);
+          const img = (it && it.icon_url) ? String(it.icon_url).trim() : giftImageById(it.prize_id || it.id);
           const name = it.prize_name || it.name || 'Подарок';
           const cost = it.prize_cost ?? it.cost ?? '';
           const when = it.created_at ? new Date(it.created_at * 1000).toLocaleString() : '';
           return `
             <div class="inv-card">
-              <div class="inv-icon">${mediaHTML(icon, '', '')}</div>
+              <img src="${img}" alt="gift" />
               <div class="inv-meta">
                 <div class="inv-name">${name}</div>
                 <div class="inv-sub">⭐ ${cost} ${when ? '• ' + when : ''}</div>
@@ -675,7 +695,6 @@
             </div>
           `;
         }).join('');
-        kickVideos(inventoryList);
       } catch (_) {
         inventoryEmpty.style.display = '';
         inventoryList.style.display = 'none';
@@ -698,7 +717,9 @@
 
         topList.innerHTML = items.map(it => {
           const badge = it.is_me ? ' style="box-shadow: inset 0 0 0 2px rgba(74,163,255,0.55)"' : '';
-          const av = avatarHTML(it.avatar, it.name, 'lb-avatar');
+          const av = it.avatar
+            ? `<img class="lb-avatar" src="${it.avatar}" alt="avatar" referrerpolicy="no-referrer" />`
+            : `<div class="lb-avatar lb-avatar--ph">${initialsFromName(it.name)}</div>`;
           return `
             <div class="inv-card"${badge}>
               ${av}
@@ -712,32 +733,6 @@
       } catch (_) {
         topMe.textContent = 'Ошибка загрузки лидерборда';
         topList.innerHTML = '';
-      }
-    }
-
-    async function refreshRecentWins() {
-      if (!recentList) return;
-      try {
-        const res = await apiPost('/recent_wins', { initData: tg?.initData || '' });
-        const items = Array.isArray(res.items) ? res.items : [];
-        recentList.innerHTML = items.slice(0, 20).map(w => {
-          const av = avatarHTML(w.avatar, w.name, 'rw-avatar');
-          const icon = resolveIconUrl(w.prize_id, w.icon_url);
-          return `
-            <div class="recent-item">
-              ${av}
-              <div class="rw-meta">
-                <div class="rw-name">${w.name}</div>
-                <div class="rw-prize">${w.prize_name} • ⭐ ${w.prize_cost}</div>
-              </div>
-              <div class="rw-icon">${mediaHTML(icon, '', '')}</div>
-            </div>
-          `;
-        }).join('');
-        kickVideos(recentList);
-        if (recentStatus) recentStatus.textContent = '';
-      } catch (e) {
-        if (recentStatus) recentStatus.textContent = 'ошибка';
       }
     }
 
@@ -862,13 +857,11 @@
         alert('Ошибка: /spin не вернул spin_id. Обнови бэкенд /spin.');
         btn.disabled = false;
         pendingPrize = null;
+        refreshRecentWins();
         return;
       }
 
-      const icon = resolveIconUrl(prize.id, prize.icon_url);
-      claimMedia.innerHTML = mediaHTML(icon, '', '');
-      kickVideos(claimMedia);
-
+      claimImg.src = (prize && prize.icon_url) ? String(prize.icon_url).trim() : giftImageById(prize.id);
       claimName.textContent = prize.name || 'Подарок';
       claimMeta.textContent = `Продать за ⭐ ${prize.cost} или забрать в инвентарь`;
 
@@ -919,9 +912,8 @@
 
         pendingSpinId = null;
         pendingPrize = null;
-        btn.disabled = false;
-
         refreshRecentWins();
+        btn.disabled = false;
 
       } catch (e) {
         alert('Ошибка: ' + (e?.message || e));
@@ -956,7 +948,6 @@
       requestAnimationFrame(() => { r.scrollLeft = r._third(); });
 
       r.dataset.initialized = 'true';
-      kickVideos(r);
     }
 
     function normalizeInfinite() {
@@ -1062,9 +1053,6 @@
       r.addEventListener('wheel', blockScroll, { passive: false });
 
       btn.addEventListener('click', async () => {
-        // user gesture: запускаем все видео, чтобы iOS не рисовал play overlay
-        kickVideos(document);
-
         if (pendingSpinId && pendingPrize) {
           openClaim(pendingPrize);
           return;
@@ -1080,8 +1068,7 @@
 
           await spinToPrize(prize);
           openClaim(prize);
-
-          refreshRecentWins();
+          setTimeout(refreshRecentWins, 300);
 
         } catch (e) {
           alert('Ошибка: ' + (e?.message || e));
@@ -1090,14 +1077,15 @@
           r.style.pointerEvents = '';
         }
       });
-
-      // start
-      refreshBalance();
-      refreshPrizes().then(() => initInfiniteRoulette());
-      refreshInventory();
-      refreshRecentWins();
-      setInterval(refreshRecentWins, 12000);
-      setTab('spin');
+      (async () => {
+        await refreshPrizes();
+        initInfiniteRoulette();
+        refreshBalance();
+        refreshRecentWins();
+        setInterval(refreshRecentWins, 12000);
+        refreshInventory();
+        setTab('spin');
+      })();
     } else {
       console.warn('spinBtn или roulette не найдены');
     }
