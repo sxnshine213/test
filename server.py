@@ -7,7 +7,7 @@ import hmac
 import hashlib
 import urllib.request
 from urllib.parse import parse_qsl
-from typing import Literal
+from typing import Literal, Optional, Tuple, Dict, Any
 
 from fastapi import FastAPI, HTTPException, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -108,11 +108,13 @@ def init_db():
           created_at BIGINT NOT NULL
         )
         """,
-
-        "ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT",
-        "ALTER TABLE users ADD COLUMN IF NOT EXISTS first_name TEXT",
-        "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_name TEXT",
-        "ALTER TABLE users ADD COLUMN IF NOT EXISTS photo_url TEXT",
+        """
+        ALTER TABLE users
+          ADD COLUMN IF NOT EXISTS username TEXT,
+          ADD COLUMN IF NOT EXISTS first_name TEXT,
+          ADD COLUMN IF NOT EXISTS last_name TEXT,
+          ADD COLUMN IF NOT EXISTS photo_url TEXT
+        """,
 
         """
         CREATE TABLE IF NOT EXISTS spins (
@@ -149,7 +151,7 @@ def init_db():
         )
         """,
         "CREATE INDEX IF NOT EXISTS idx_spins_user_time ON spins(tg_user_id, created_at)",
-        "CREATE INDEX IF NOT EXISTS idx_spins_time ON spins(created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_spins_created_at ON spins(created_at)",
         "CREATE INDEX IF NOT EXISTS idx_inv_user_time ON inventory(tg_user_id, created_at)",
         "CREATE INDEX IF NOT EXISTS idx_topups_user_time ON topups(tg_user_id, created_at)",
     ]
@@ -178,27 +180,29 @@ def _parse_init_data(init_data: str) -> dict:
     return dict(parse_qsl(init_data, keep_blank_values=True))
 
 
-def extract_tg_user_id(init_data: str) -> str:
+
+def extract_tg_user(init_data: str) -> Tuple[str, Optional[Dict[str, Any]]]:
+    """Verify WebApp initData and return (tg_user_id, user_dict)."""
     if not init_data:
         if ALLOW_GUEST:
-            return "guest"
+            return "guest", None
         raise HTTPException(status_code=401, detail="initData required")
 
     data = _parse_init_data(init_data)
     user_json = data.get("user")
     if not user_json:
         if ALLOW_GUEST:
-            return "guest"
+            return "guest", None
         raise HTTPException(status_code=401, detail="no user in initData")
 
     # fallback (только для дебага)
     if not BOT_TOKEN:
         try:
             user = json.loads(user_json)
-            return str(user.get("id", "guest"))
+            return str(user.get("id", "guest")), user
         except Exception:
             if ALLOW_GUEST:
-                return "guest"
+                return "guest", None
             raise HTTPException(status_code=401, detail="bad initData")
 
     their_hash = data.get("hash")
@@ -229,32 +233,14 @@ def extract_tg_user_id(init_data: str) -> str:
 
     try:
         user = json.loads(user_json)
-        return str(user.get("id"))
+        return str(user.get("id")), user
     except Exception:
         raise HTTPException(status_code=401, detail="bad user json")
 
 
-def extract_tg_user_public(init_data: str) -> dict | None:
-    """
-    Extract public user fields from Telegram WebApp initData.user JSON.
-    Assumes initData already validated by extract_tg_user_id() in the calling path.
-    """
-    if not init_data:
-        return None
-    try:
-        data = _parse_init_data(init_data)
-        user_json = data.get("user")
-        if not user_json:
-            return None
-        user = json.loads(user_json)
-        return {
-            "username": user.get("username"),
-            "first_name": user.get("first_name"),
-            "last_name": user.get("last_name"),
-            "photo_url": user.get("photo_url"),
-        }
-    except Exception:
-        return None
+def extract_tg_user_id(init_data: str) -> str:
+    uid, _ = extract_tg_user(init_data)
+    return uid
 
 
 
@@ -279,35 +265,15 @@ def tg_api(method: str, payload: dict):
 
 
 # ===== DB helpers =====
-def get_or_create_user(cur, tg_user_id: str, public: dict | None = None) -> int:
+def get_or_create_user(cur, tg_user_id: str) -> int:
     cur.execute(
         "INSERT INTO users (tg_user_id, balance, created_at) "
         "VALUES (%s, %s, %s) ON CONFLICT (tg_user_id) DO NOTHING",
         (tg_user_id, START_BALANCE, int(time.time())),
     )
-
-    if public:
-        cur.execute(
-            "UPDATE users SET "
-            "username = COALESCE(%s, username), "
-            "first_name = COALESCE(%s, first_name), "
-            "last_name = COALESCE(%s, last_name), "
-            "photo_url = COALESCE(%s, photo_url) "
-            "WHERE tg_user_id = %s",
-            (
-                public.get("username"),
-                public.get("first_name"),
-                public.get("last_name"),
-                public.get("photo_url"),
-                tg_user_id,
-            ),
-        )
-
     cur.execute("SELECT balance FROM users WHERE tg_user_id=%s", (tg_user_id,))
     row = cur.fetchone()
     return int(row[0]) if row else START_BALANCE
-
-
 
 
 def mask_uid(uid: str) -> str:
@@ -323,12 +289,27 @@ def root():
 
 @app.post("/me")
 def me(req: MeReq):
-    uid = extract_tg_user_id(req.initData)
-    public = extract_tg_user_public(req.initData)
+    uid, user = extract_tg_user(req.initData)
     with pool.connection() as con:
         with con:
             with con.cursor() as cur:
-                bal = get_or_create_user(cur, uid, public)
+                bal = get_or_create_user(cur, uid)
+
+                # save Telegram public profile (if provided)
+                if user and uid != "guest":
+                    username = user.get("username")
+                    first_name = user.get("first_name")
+                    last_name = user.get("last_name")
+                    photo_url = user.get("photo_url")
+
+                    cur.execute(
+                        "UPDATE users SET username = COALESCE(%s, username), "
+                        "first_name = COALESCE(%s, first_name), "
+                        "last_name = COALESCE(%s, last_name), "
+                        "photo_url = COALESCE(%s, photo_url) "
+                        "WHERE tg_user_id=%s",
+                        (username, first_name, last_name, photo_url, uid),
+                    )
     return {"tg_user_id": uid, "balance": int(bal)}
 
 
@@ -353,6 +334,47 @@ def inventory(req: InventoryReq):
         "prize_cost": int(r[2]),
         "created_at": int(r[3]),
     } for r in rows]}
+
+
+
+@app.post("/recent_wins")
+def recent_wins(req: MeReq):
+    # only to enforce initData verification (and allow guest if enabled)
+    extract_tg_user_id(req.initData)
+
+    with pool.connection() as con:
+        with con:
+            with con.cursor() as cur:
+                cur.execute(
+                    "SELECT u.tg_user_id, u.username, u.first_name, u.last_name, u.photo_url, s.prize_name, s.created_at "
+                    "FROM spins s JOIN users u ON u.tg_user_id = s.tg_user_id "
+                    "ORDER BY s.created_at DESC LIMIT 20"
+                )
+                rows = cur.fetchall()
+
+    items = []
+    for r in rows:
+        tg_user_id = str(r[0])
+        username = r[1]
+        first_name = r[2]
+        last_name = r[3]
+        photo_url = r[4]
+        prize_name = r[5]
+
+        if username:
+            name = f"@{username}"
+        else:
+            full = f"{first_name or ''} {last_name or ''}".strip()
+            name = full if full else mask_uid(tg_user_id)
+
+        items.append({
+            "tg_user_id": tg_user_id,
+            "name": name,
+            "avatar": photo_url,
+            "prize": prize_name,
+        })
+
+    return {"items": items}
 
 
 @app.post("/spin")
@@ -466,47 +488,6 @@ def leaderboard(req: LeaderboardReq):
         })
 
     return {"items": items, "me": {"rank": my_rank, "balance": int(my_balance)}}
-
-
-
-@app.post("/recent_wins")
-def recent_wins(req: MeReq):
-    """
-    Recent spins with public display name + avatar (from users table).
-    """
-    uid = extract_tg_user_id(req.initData)
-
-    with pool.connection() as con:
-        with con:
-            with con.cursor() as cur:
-                # ensure user exists (and update their own public fields opportunistically)
-                public = extract_tg_user_public(req.initData)
-                get_or_create_user(cur, uid, public)
-
-                cur.execute(
-                    "SELECT s.tg_user_id, u.username, u.first_name, u.last_name, u.photo_url "
-                    "FROM spins s JOIN users u ON u.tg_user_id = s.tg_user_id "
-                    "ORDER BY s.created_at DESC LIMIT 20"
-                )
-                rows = cur.fetchall()
-
-    items = []
-    for r in rows:
-        tg_user_id = str(r[0])
-        username = (r[1] or "").strip()
-        first_name = (r[2] or "").strip()
-        last_name = (r[3] or "").strip()
-        photo_url = (r[4] or "").strip() or None
-
-        if username:
-            name = "@" + username.lstrip("@")
-        else:
-            full = (first_name + " " + last_name).strip()
-            name = full if full else mask_uid(tg_user_id)
-
-        items.append({"tg_user_id": tg_user_id, "name": name, "avatar": photo_url})
-
-    return {"items": items}
 
 
 @app.post("/topup/create")

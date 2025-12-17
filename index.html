@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>🎁 Случайный подарок</title>
+  <title>archicasino</title>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
 
   <style>
@@ -30,13 +30,6 @@
       align-items: center;
       font-weight: 700;
       font-size: 16px;
-    }
-    .ad {
-      background: #162235;
-      border-radius: 12px;
-      padding: 10px;
-      font-size: 12px;
-      opacity: 0.9;
     }
     .tabs { display: flex; gap: 10px; }
     .pill {
@@ -268,11 +261,11 @@
 
     /* Recent wins */
     .recent-wins{
-      margin: 10px 0 0;
-      padding: 10px 10px;
-      border-radius: 14px;
+      margin-top: 10px;
       background: rgba(255,255,255,0.06);
       border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 14px;
+      padding: 10px;
     }
     .recent-wins__title{
       font-size: 12px;
@@ -288,6 +281,7 @@
       scrollbar-width: none;
     }
     .recent-wins__list::-webkit-scrollbar{ display:none; }
+
     .recent-win{
       display: inline-flex;
       align-items: center;
@@ -296,10 +290,8 @@
       border-radius: 999px;
       background: rgba(0,0,0,0.25);
       border: 1px solid rgba(255,255,255,0.08);
-      white-space: nowrap;
       flex: 0 0 auto;
-      user-select: none;
-      -webkit-user-select: none;
+      white-space: nowrap;
     }
     .recent-win__avatar{
       width: 26px;
@@ -307,7 +299,6 @@
       border-radius: 50%;
       object-fit: cover;
       background: rgba(255,255,255,0.12);
-      display: block;
       flex: 0 0 auto;
     }
     .recent-win__avatar--ph{
@@ -316,12 +307,27 @@
       justify-content:center;
       font-size: 11px;
       font-weight: 900;
-      color: rgba(255,255,255,0.9);
+      color: #fff;
+    }
+    .recent-win__text{
+      display:flex;
+      flex-direction:column;
+      gap: 2px;
+      line-height: 1.05;
+      max-width: 220px;
     }
     .recent-win__name{
-      font-size: 13px;
-      max-width: 160px;
-      overflow: hidden;
+      font-size: 12px;
+      font-weight: 900;
+      max-width: 220px;
+      overflow:hidden;
+      text-overflow: ellipsis;
+    }
+    .recent-win__prize{
+      font-size: 11px;
+      opacity: .78;
+      max-width: 220px;
+      overflow:hidden;
       text-overflow: ellipsis;
     }
 
@@ -331,7 +337,7 @@
 <body>
   <div class="app">
     <div class="header">
-      <div>Случайный подарок</div>
+      <div>archicasino</div>
       <div style="display:flex; gap:8px; align-items:center;">
         <div id="balanceBadge" style="font-weight:800;font-size:13px;background:#162235;padding:6px 10px;border-radius:999px;">⭐ …</div>
         <div id="topupBtn" style="font-weight:900;font-size:13px;background:#5b8ecb;padding:6px 10px;border-radius:999px;cursor:pointer;user-select:none;-webkit-user-select:none;">
@@ -341,14 +347,11 @@
     </div>
 
     <div id="screenRoulette">
-      <div class="ad">🔐 Попробуйте VPN бесплатно!<br>▶️ Смотрите YouTube и играйте через Дискорд без тормозов</div>
 
       <div id="recentWins" class="recent-wins" style="display:none;">
         <div class="recent-wins__title">Недавние выигрыши</div>
         <div id="recentWinsList" class="recent-wins__list"></div>
       </div>
-
-
       <div class="tabs">
         <div class="pill active" data-cost="25">25 ⭐</div>
         <div class="pill" data-cost="50">50 ⭐</div>
@@ -472,6 +475,9 @@
     const topList = document.getElementById('topList');
     const topMe = document.getElementById('topMe');
 
+    const recentWinsWrap = document.getElementById('recentWins');
+    const recentWinsList = document.getElementById('recentWinsList');
+
     const claimBackdrop = document.getElementById('claimBackdrop');
     const claimSheet = document.getElementById('claimSheet');
     const claimClose = document.getElementById('claimClose');
@@ -514,70 +520,6 @@
         if (balanceBadge) balanceBadge.textContent = `⭐ ${me.balance}`;
       } catch (_) {
         if (balanceBadge) balanceBadge.textContent = '⭐ —';
-      }
-    }
-
-    // ===== Recent wins =====
-    const recentWinsWrap = document.getElementById('recentWins');
-    const recentWinsList = document.getElementById('recentWinsList');
-
-    function initialsFromName(name) {
-      const s = (name || '').trim().replace(/^@/, '');
-      if (!s) return 'U';
-      const parts = s.split(/\s+/).filter(Boolean);
-      const a = (parts[0] || '')[0] || 'U';
-      const b = (parts[1] || '')[0] || '';
-      return (a + b).toUpperCase();
-    }
-
-    function renderRecentWins(items) {
-      if (!recentWinsWrap || !recentWinsList) return;
-
-      const list = Array.isArray(items) ? items : [];
-      if (!list.length) {
-        recentWinsWrap.style.display = 'none';
-        recentWinsList.innerHTML = '';
-        return;
-      }
-
-      recentWinsWrap.style.display = '';
-      recentWinsList.innerHTML = '';
-
-      for (const it of list) {
-        const el = document.createElement('div');
-        el.className = 'recent-win';
-
-        let avatarNode;
-        if (it && it.avatar) {
-          const img = document.createElement('img');
-          img.className = 'recent-win__avatar';
-          img.src = it.avatar;
-          img.alt = it.name || 'user';
-          img.referrerPolicy = 'no-referrer';
-          avatarNode = img;
-        } else {
-          const ph = document.createElement('div');
-          ph.className = 'recent-win__avatar recent-win__avatar--ph';
-          ph.textContent = initialsFromName(it?.name);
-          avatarNode = ph;
-        }
-
-        const name = document.createElement('div');
-        name.className = 'recent-win__name';
-        name.textContent = it?.name || 'User';
-
-        el.appendChild(avatarNode);
-        el.appendChild(name);
-        recentWinsList.appendChild(el);
-      }
-    }
-
-    async function refreshRecentWins() {
-      try {
-        const res = await apiPost('/recent_wins', { initData: tg?.initData || '' });
-        renderRecentWins(res?.items || []);
-      } catch (_) {
-        // silently ignore
       }
     }
 
@@ -656,6 +598,74 @@
       } catch (_) {
         topMe.textContent = 'Ошибка загрузки лидерборда';
         topList.innerHTML = '';
+      }
+    }
+
+
+    function initialsFromName(name) {
+      const s = (name || '').trim();
+      if (!s) return 'U';
+      const parts = s.replace(/^@/, '').split(/\s+/).filter(Boolean);
+      const a = (parts[0] || '')[0] || 'U';
+      const b = (parts[1] || '')[0] || '';
+      return (a + b).toUpperCase();
+    }
+
+    async function loadRecentWins() {
+      if (!recentWinsWrap || !recentWinsList) return;
+      try {
+        const res = await apiPost('/recent_wins', { initData: tg?.initData || '' });
+        const items = Array.isArray(res?.items) ? res.items : [];
+        if (!items.length) {
+          recentWinsWrap.style.display = 'none';
+          recentWinsList.innerHTML = '';
+          return;
+        }
+
+        recentWinsWrap.style.display = '';
+        recentWinsList.innerHTML = '';
+
+        for (const it of items) {
+          const el = document.createElement('div');
+          el.className = 'recent-win';
+
+          let avatarNode;
+          if (it.avatar) {
+            const img = document.createElement('img');
+            img.className = 'recent-win__avatar';
+            img.src = it.avatar;
+            img.alt = it.name || 'user';
+            img.referrerPolicy = 'no-referrer';
+            avatarNode = img;
+          } else {
+            const ph = document.createElement('div');
+            ph.className = 'recent-win__avatar recent-win__avatar--ph';
+            ph.textContent = initialsFromName(it.name);
+            avatarNode = ph;
+          }
+
+          const text = document.createElement('div');
+          text.className = 'recent-win__text';
+
+          const name = document.createElement('div');
+          name.className = 'recent-win__name';
+          name.textContent = it.name || 'User';
+
+          const prize = document.createElement('div');
+          prize.className = 'recent-win__prize';
+          prize.textContent = it.prize || it.prize_name || it.prizeName || '—';
+
+          text.appendChild(name);
+          text.appendChild(prize);
+
+          el.appendChild(avatarNode);
+          el.appendChild(text);
+
+          recentWinsList.appendChild(el);
+        }
+      } catch (_) {
+        recentWinsWrap.style.display = 'none';
+        recentWinsList.innerHTML = '';
       }
     }
 
@@ -780,7 +790,6 @@
         alert('Ошибка: /spin не вернул spin_id. Обнови бэкенд /spin.');
         btn.disabled = false;
         pendingPrize = null;
-        refreshRecentWins();
         return;
       }
 
@@ -835,8 +844,8 @@
 
         pendingSpinId = null;
         pendingPrize = null;
-        refreshRecentWins();
         btn.disabled = false;
+        loadRecentWins();
 
       } catch (e) {
         alert('Ошибка: ' + (e?.message || e));
@@ -991,7 +1000,7 @@
 
           await spinToPrize(prize);
           openClaim(prize);
-          setTimeout(refreshRecentWins, 300);
+          loadRecentWins();
 
         } catch (e) {
           alert('Ошибка: ' + (e?.message || e));
@@ -1003,8 +1012,8 @@
 
       initInfiniteRoulette();
       refreshBalance();
-      refreshRecentWins();
-      setInterval(refreshRecentWins, 12000);
+      loadRecentWins();
+      setInterval(loadRecentWins, 12000);
       refreshInventory();
       setTab('spin');
     } else {
