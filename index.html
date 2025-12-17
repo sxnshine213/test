@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>archicasino</title>
+  <title>🎁 Случайный подарок</title>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
 
   <style>
@@ -30,6 +30,13 @@
       align-items: center;
       font-weight: 700;
       font-size: 16px;
+    }
+    .ad {
+      background: #162235;
+      border-radius: 12px;
+      padding: 10px;
+      font-size: 12px;
+      opacity: 0.9;
     }
     .tabs { display: flex; gap: 10px; }
     .pill {
@@ -78,7 +85,7 @@
       transform: translateY(-2px) scale(1.03);
       box-shadow: 0 0 0 2px rgba(74,163,255,0.35), 0 0 22px rgba(74,163,255,0.25);
     }
-    .item img { width: 56px; height: 56px; }
+    .item img, .item video { width: 56px; height: 56px; object-fit: cover; border-radius: 12px; }
     .price {
       margin-top: 6px;
       font-size: 12px;
@@ -145,10 +152,7 @@
       gap: 10px;
       align-items: center;
     }
-    .inv-card img { width: 34px; height: 34px; }
-    .lb-avatar{width:34px;height:34px;border-radius:50%;object-fit:cover;background: rgba(255,255,255,0.12);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:900;flex:0 0 auto;}
-    .lb-avatar--ph{color: rgba(255,255,255,0.9);}
-
+    .inv-card img, .inv-card video { width: 34px; height: 34px; object-fit: cover; border-radius: 10px; }
     .inv-meta { display: flex; flex-direction: column; gap: 2px; }
     .inv-name { font-size: 12px; font-weight: 800; }
     .inv-sub { font-size: 11px; opacity: 0.75; }
@@ -212,6 +216,7 @@
     }
     .claim-row { display:flex; gap:12px; align-items:center; }
     .claim-row img { width:54px; height:54px; border-radius:14px; background:#162235; padding:6px; }
+    .claim-row video { width:54px; height:54px; border-radius:14px; background:#162235; padding:6px; object-fit:cover; }
     .claim-name { font-weight: 900; }
     .claim-meta { font-size:12px; opacity:.8; }
     .claim-actions { display:flex; gap:10px; margin-top:14px; }
@@ -261,73 +266,13 @@
     .topup-cancel { background:#162235; }
     .topup-buy { background:#5b8ecb; }
     .topup-note { margin-top:10px; font-size:12px; opacity:.7; }
-
-    /* Recent wins */
-    .recent-wins{
-      margin: 10px 0 0;
-      padding: 10px 10px;
-      border-radius: 14px;
-      background: rgba(255,255,255,0.06);
-      border: 1px solid rgba(255,255,255,0.08);
-    }
-    .recent-wins__title{
-      font-size: 12px;
-      opacity: .75;
-      margin-bottom: 8px;
-      font-weight: 800;
-    }
-    .recent-wins__list{
-      display: flex;
-      gap: 10px;
-      overflow-x: auto;
-      -webkit-overflow-scrolling: touch;
-      scrollbar-width: none;
-    }
-    .recent-wins__list::-webkit-scrollbar{ display:none; }
-    .recent-win{
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      padding: 8px 10px;
-      border-radius: 999px;
-      background: rgba(0,0,0,0.25);
-      border: 1px solid rgba(255,255,255,0.08);
-      white-space: nowrap;
-      flex: 0 0 auto;
-      user-select: none;
-      -webkit-user-select: none;
-    }
-    .recent-win__avatar{
-      width: 26px;
-      height: 26px;
-      border-radius: 50%;
-      object-fit: cover;
-      background: rgba(255,255,255,0.12);
-      display: block;
-      flex: 0 0 auto;
-    }
-    .recent-win__avatar--ph{
-      display:flex;
-      align-items:center;
-      justify-content:center;
-      font-size: 11px;
-      font-weight: 900;
-      color: rgba(255,255,255,0.9);
-    }
-    .recent-win__meta{display:flex;flex-direction:column;gap:2px;line-height:1.05;}
-    .recent-win__name{font-size: 13px; max-width: 170px; overflow: hidden; text-overflow: ellipsis;}
-    .recent-win__prize{font-size: 11px; opacity: .75; max-width: 170px; overflow: hidden; text-overflow: ellipsis; display:flex; align-items:center;}
-
-  
-    .recent-win__prize-icon{width:14px;height:14px;border-radius:3px;object-fit:cover;margin-right:6px;vertical-align:middle;}
-
   </style>
 </head>
 
 <body>
   <div class="app">
     <div class="header">
-      <div>archicasino</div>
+      <div>Случайный подарок</div>
       <div style="display:flex; gap:8px; align-items:center;">
         <div id="balanceBadge" style="font-weight:800;font-size:13px;background:#162235;padding:6px 10px;border-radius:999px;">⭐ …</div>
         <div id="topupBtn" style="font-weight:900;font-size:13px;background:#5b8ecb;padding:6px 10px;border-radius:999px;cursor:pointer;user-select:none;-webkit-user-select:none;">
@@ -337,11 +282,7 @@
     </div>
 
     <div id="screenRoulette">
-<div id="recentWins" class="recent-wins" style="display:none;">
-        <div class="recent-wins__title">Недавние выигрыши</div>
-        <div id="recentWinsList" class="recent-wins__list"></div>
-      </div>
-
+      <div class="ad">🔐 Попробуйте VPN бесплатно!<br>▶️ Смотрите YouTube и играйте через Дискорд без тормозов</div>
 
       <div class="tabs">
         <div class="pill active" data-cost="25">25 ⭐</div>
@@ -396,6 +337,7 @@
 
     <div class="claim-row">
       <img id="claimImg" src="" alt="prize">
+      <video id="claimVideo" src="" muted playsinline loop autoplay style="display:none;"></video>
       <div style="display:flex; flex-direction:column; gap:4px;">
         <div id="claimName" class="claim-name">—</div>
         <div id="claimMeta" class="claim-meta">—</div>
@@ -470,6 +412,7 @@
     const claimSheet = document.getElementById('claimSheet');
     const claimClose = document.getElementById('claimClose');
     const claimImg = document.getElementById('claimImg');
+    const claimVideo = document.getElementById('claimVideo');
     const claimName = document.getElementById('claimName');
     const claimMeta = document.getElementById('claimMeta');
     const btnSell = document.getElementById('btnSell');
@@ -502,60 +445,6 @@
       return data;
     }
 
-
-    // ===== Prizes (icons from backend) =====
-    let PRIZES_BY_ID = {};
-
-    function setPrizes(items) {
-      PRIZES_BY_ID = {};
-      const list = Array.isArray(items) ? items : [];
-      for (const p of list) {
-        if (!p || !p.id) continue;
-        PRIZES_BY_ID[Number(p.id)] = p;
-      }
-    }
-
-    function rebuildRouletteFromPrizes(items) {
-      if (!r) return;
-      const list = Array.isArray(items) ? items : [];
-      if (!list.length) return;
-
-      // Reset infinite-scroll clone state
-      r.dataset.initialized = 'false';
-      r.innerHTML = '';
-
-      for (const p of list) {
-        const item = document.createElement('div');
-        item.className = 'item';
-        item.dataset.id = String(p.id);
-
-        const img = document.createElement('img');
-        img.src = (p.icon_url || '').trim() || giftImageById(p.id);
-        img.alt = 'prize';
-        img.referrerPolicy = 'no-referrer';
-
-        const price = document.createElement('div');
-        price.className = 'price';
-        price.textContent = `⭐ ${p.cost ?? ''}`;
-
-        item.appendChild(img);
-        item.appendChild(price);
-        r.appendChild(item);
-      }
-    }
-
-    async function refreshPrizes() {
-      try {
-        const res = await apiPost('/prizes', { initData: tg?.initData || '' });
-        const items = Array.isArray(res?.items) ? res.items : [];
-        setPrizes(items);
-        rebuildRouletteFromPrizes(items);
-      } catch (e) {
-        // keep fallback (hardcoded items) if backend endpoint not available
-        console.warn('refreshPrizes failed', e);
-      }
-    }
-
     async function refreshBalance() {
       try {
         const me = await apiPost('/me', { initData: tg?.initData || '' });
@@ -565,96 +454,7 @@
       }
     }
 
-    // ===== Recent wins =====
-    const recentWinsWrap = document.getElementById('recentWins');
-    const recentWinsList = document.getElementById('recentWinsList');
-
-    function initialsFromName(name) {
-      const s = (name || '').trim().replace(/^@/, '');
-      if (!s) return 'U';
-      const parts = s.split(/\s+/).filter(Boolean);
-      const a = (parts[0] || '')[0] || 'U';
-      const b = (parts[1] || '')[0] || '';
-      return (a + b).toUpperCase();
-    }
-
-    function renderRecentWins(items) {
-      if (!recentWinsWrap || !recentWinsList) return;
-
-      const list = Array.isArray(items) ? items : [];
-      if (!list.length) {
-        recentWinsWrap.style.display = 'none';
-        recentWinsList.innerHTML = '';
-        return;
-      }
-
-      recentWinsWrap.style.display = '';
-      recentWinsList.innerHTML = '';
-
-      for (const it of list) {
-        const el = document.createElement('div');
-        el.className = 'recent-win';
-
-        let avatarNode;
-        if (it && it.avatar) {
-          const img = document.createElement('img');
-          img.className = 'recent-win__avatar';
-          img.src = it.avatar;
-          img.alt = it.name || 'user';
-          img.referrerPolicy = 'no-referrer';
-          avatarNode = img;
-        } else {
-          const ph = document.createElement('div');
-          ph.className = 'recent-win__avatar recent-win__avatar--ph';
-          ph.textContent = initialsFromName(it?.name);
-          avatarNode = ph;
-        }
-
-        const meta = document.createElement('div');
-        meta.className = 'recent-win__meta';
-
-        const name = document.createElement('div');
-        name.className = 'recent-win__name';
-        name.textContent = it?.name || 'User';
-
-        const prizeText = (it?.prize || it?.prize_name || '').trim();
-        const prizeRow = document.createElement('div');
-        prizeRow.className = 'recent-win__prize';
-        if (it?.icon_url) {
-          const pi = document.createElement('img');
-          pi.className = 'recent-win__prize-icon';
-          pi.src = String(it.icon_url).trim();
-          pi.alt = 'icon';
-          pi.referrerPolicy = 'no-referrer';
-          prizeRow.appendChild(pi);
-        }
-        const pt = document.createElement('span');
-        pt.textContent = prizeText;
-        prizeRow.appendChild(pt);
-
-        meta.appendChild(name);
-        if (prizeText) meta.appendChild(prizeRow);
-
-        el.appendChild(avatarNode);
-        el.appendChild(meta);
-        recentWinsList.appendChild(el);
-      }
-    }
-
-    async function refreshRecentWins() {
-      try {
-        const res = await apiPost('/recent_wins', { initData: tg?.initData || '' });
-        renderRecentWins(res?.items || []);
-      } catch (_) {
-        // silently ignore
-      }
-    }
-
     function giftImageById(id) {
-      const p = PRIZES_BY_ID && PRIZES_BY_ID[Number(id)];
-      const url = (p && p.icon_url) ? String(p.icon_url).trim() : '';
-      if (url) return url;
-
       const map = {
         1: 'https://emojiapi.dev/api/v1/heart_with_ribbon/128.png',
         2: 'https://emojiapi.dev/api/v1/teddy_bear/128.png',
@@ -664,6 +464,129 @@
       };
       return map[id] || map[1];
     }
+
+    // Prize metadata loaded from backend (/prizes)
+    let PRIZE_MAP = {};
+
+    function isWebmUrl(url) {
+      return !!url && /\.webm(\?|$)/i.test(url);
+    }
+
+
+    function _kickVideo(v) {
+      if (!v) return;
+      try { v.muted = true; } catch (_) {}
+      try { v.playsInline = true; } catch (_) {}
+      try { v.loop = true; } catch (_) {}
+      try { v.autoplay = true; } catch (_) {}
+      // iOS Safari / Telegram WebView hints
+      v.setAttribute('muted', '');
+      v.setAttribute('playsinline', '');
+      v.setAttribute('webkit-playsinline', '');
+      v.setAttribute('loop', '');
+      v.setAttribute('autoplay', '');
+      v.preload = 'metadata';
+      v.controls = false;
+      v.disablePictureInPicture = true;
+      v.addEventListener('loadedmetadata', () => {
+        try { v.play(); } catch (_) {}
+      }, { once: true });
+      try { v.play(); } catch (_) {}
+    }
+
+    function _makeMediaEl(url, fallbackImgUrl) {
+      const u = (url || '').trim();
+      if (isWebmUrl(u)) {
+        const v = document.createElement('video');
+        v.className = 'gift-media';
+        v.src = u;
+        // If you also host a .webp next to .webm, poster helps on first frame / failover.
+        const poster = fallbackImgUrl ? String(fallbackImgUrl) : '';
+        if (poster) v.poster = poster;
+        // Graceful fallback: if video fails, replace with image.
+        if (!v.dataset._fallbackBound) {
+          v.dataset._fallbackBound = '1';
+          v.addEventListener('error', () => {
+            const img = document.createElement('img');
+            img.className = 'gift-media';
+            img.src = poster || giftImageById(1);
+            img.alt = 'gift';
+            v.replaceWith(img);
+          }, { once: true });
+        }
+        _kickVideo(v);
+        return v;
+      }
+
+      const img = document.createElement('img');
+      img.className = 'gift-media';
+      img.src = u || (fallbackImgUrl || '');
+      img.alt = 'gift';
+      img.onerror = () => {
+        img.onerror = null;
+        img.src = fallbackImgUrl || giftImageById(1);
+      };
+      return img;
+    }
+
+    function _setMediaInContainer(container, url, fallbackImgUrl) {
+      if (!container) return;
+      const existing = container.querySelector('video.gift-media, img.gift-media, video, img');
+      const media = _makeMediaEl(url, fallbackImgUrl);
+      if (existing) {
+        existing.replaceWith(media);
+      } else {
+        container.prepend(media);
+      }
+    }
+
+    // For lists/roulette we prefer a static thumbnail to avoid running many videos at once.
+    // Convention: if icon_url ends with .webm, we try the same URL with .webp.
+    function staticIconUrl(url) {
+      if (!url) return '';
+      return isWebmUrl(url) ? url.replace(/\.webm(\?.*)?$/i, '.webp$1') : url;
+    }
+
+    function prizeIconUrl(prizeId, iconUrlFromApi) {
+      const fromApi = iconUrlFromApi || null;
+      const fromMap = PRIZE_MAP && PRIZE_MAP[prizeId] ? (PRIZE_MAP[prizeId].icon_url || null) : null;
+      return fromApi || fromMap || giftImageById(prizeId);
+    }
+
+    async function loadPrizes() {
+      try {
+        const res = await fetch(API_BASE + '/prizes');
+        if (!res.ok) return;
+        const data = await res.json();
+        const items = Array.isArray(data.items) ? data.items : [];
+        const map = {};
+        for (const p of items) {
+          if (!p || typeof p.id !== 'number') continue;
+          map[p.id] = p;
+        }
+        PRIZE_MAP = map;
+        applyPrizesToUI();
+      } catch (_) {}
+    }
+
+    function applyPrizesToUI() {
+      // Update roulette media + prices
+      document.querySelectorAll('#roulette .item[data-id]').forEach(el => {
+        const id = parseInt(el.dataset.id || '0', 10);
+        const p = PRIZE_MAP[id];
+        if (!p) return;
+
+        const url = (p.icon_url || '').trim() || giftImageById(id);
+        const fallback = staticIconUrl(url) || giftImageById(id);
+        _setMediaInContainer(el, url, fallback);
+
+        const price = el.querySelector('.price');
+        if (price && typeof p.cost === 'number') {
+          price.textContent = `⭐ ${p.cost}`;
+        }
+      });
+    }
+
 
     async function refreshInventory() {
       if (!inventoryList || !inventoryEmpty) return;
@@ -680,27 +603,49 @@
 
         inventoryEmpty.style.display = 'none';
         inventoryList.style.display = '';
-        inventoryList.innerHTML = items.map(it => {
-          const img = (it && it.icon_url) ? String(it.icon_url).trim() : giftImageById(it.prize_id || it.id);
-          const name = it.prize_name || it.name || 'Подарок';
+        inventoryList.innerHTML = '';
+
+        for (const it of items) {
+          const pid = it.prize_id || it.id;
+          const iconUrl = prizeIconUrl(pid, it.icon_url);
+          const fallback = staticIconUrl(iconUrl) || giftImageById(pid);
+
+          const card = document.createElement('div');
+          card.className = 'inv-card';
+
+          const media = _makeMediaEl(iconUrl, fallback);
+          card.appendChild(media);
+
+          const meta = document.createElement('div');
+          meta.className = 'inv-meta';
+
+          const name = document.createElement('div');
+          name.className = 'inv-name';
+          name.textContent = it.prize_name || it.name || 'Подарок';
+
+          const sub = document.createElement('div');
+          sub.className = 'inv-sub';
           const cost = it.prize_cost ?? it.cost ?? '';
           const when = it.created_at ? new Date(it.created_at * 1000).toLocaleString() : '';
-          return `
-            <div class="inv-card">
-              <img src="${img}" alt="gift" />
-              <div class="inv-meta">
-                <div class="inv-name">${name}</div>
-                <div class="inv-sub">⭐ ${cost} ${when ? '• ' + when : ''}</div>
-              </div>
-            </div>
-          `;
-        }).join('');
+          sub.textContent = `⭐ ${cost}${when ? ' • ' + when : ''}`;
+
+          meta.appendChild(name);
+          meta.appendChild(sub);
+          card.appendChild(meta);
+
+          inventoryList.appendChild(card);
+        }
+
+        // Ensure all inventory videos attempt to play
+        inventoryList.querySelectorAll('video.gift-media').forEach(_kickVideo);
+
       } catch (_) {
         inventoryEmpty.style.display = '';
         inventoryList.style.display = 'none';
         inventoryList.innerHTML = '';
       }
     }
+
 
     async function refreshLeaderboard() {
       if (!topList || !topMe) return;
@@ -717,12 +662,8 @@
 
         topList.innerHTML = items.map(it => {
           const badge = it.is_me ? ' style="box-shadow: inset 0 0 0 2px rgba(74,163,255,0.55)"' : '';
-          const av = it.avatar
-            ? `<img class="lb-avatar" src="${it.avatar}" alt="avatar" referrerpolicy="no-referrer" />`
-            : `<div class="lb-avatar lb-avatar--ph">${initialsFromName(it.name)}</div>`;
           return `
             <div class="inv-card"${badge}>
-              ${av}
               <div class="inv-meta" style="width:100%;">
                 <div class="inv-name">#${it.rank} • ${it.name}</div>
                 <div class="inv-sub">⭐ ${it.balance}</div>
@@ -857,11 +798,27 @@
         alert('Ошибка: /spin не вернул spin_id. Обнови бэкенд /spin.');
         btn.disabled = false;
         pendingPrize = null;
-        refreshRecentWins();
         return;
       }
 
-      claimImg.src = (prize && prize.icon_url) ? String(prize.icon_url).trim() : giftImageById(prize.id);
+      const pid = prize.id;
+      const iconUrl = prizeIconUrl(pid, prize.icon_url);
+
+      if (claimVideo && isWebmUrl(iconUrl)) {
+        claimImg.style.display = 'none';
+        claimVideo.style.display = '';
+        claimVideo.src = iconUrl;
+        try { claimVideo.currentTime = 0; } catch (_) {}
+        try { claimVideo.play(); } catch (_) {}
+      } else {
+        if (claimVideo) {
+          try { claimVideo.pause(); } catch (_) {}
+          claimVideo.style.display = 'none';
+          claimVideo.src = '';
+        }
+        claimImg.style.display = '';
+        claimImg.src = staticIconUrl(iconUrl) || giftImageById(pid);
+      }
       claimName.textContent = prize.name || 'Подарок';
       claimMeta.textContent = `Продать за ⭐ ${prize.cost} или забрать в инвентарь`;
 
@@ -875,6 +832,7 @@
     function closeClaimIfAllowed() {
       claimBackdrop.style.display = 'none';
       claimSheet.style.display = 'none';
+      if (claimVideo) { try { claimVideo.pause(); } catch(_) {} }
       setTimeout(() => {
         if (pendingSpinId) {
           claimBackdrop.style.display = 'block';
@@ -909,10 +867,10 @@
 
         claimBackdrop.style.display = 'none';
         claimSheet.style.display = 'none';
+        if (claimVideo) { try { claimVideo.pause(); } catch(_) {} claimVideo.style.display='none'; claimVideo.src=''; }
 
         pendingSpinId = null;
         pendingPrize = null;
-        refreshRecentWins();
         btn.disabled = false;
 
       } catch (e) {
@@ -943,6 +901,9 @@
 
       items.forEach(el => r.appendChild(el.cloneNode(true)));
       items.forEach(el => r.appendChild(el.cloneNode(true)));
+
+      // make sure cloned videos also autoplay
+      r.querySelectorAll('video.gift-media').forEach(_kickVideo);
 
       r._third = () => r.scrollWidth / 3;
       requestAnimationFrame(() => { r.scrollLeft = r._third(); });
@@ -1068,7 +1029,6 @@
 
           await spinToPrize(prize);
           openClaim(prize);
-          setTimeout(refreshRecentWins, 300);
 
         } catch (e) {
           alert('Ошибка: ' + (e?.message || e));
@@ -1077,15 +1037,12 @@
           r.style.pointerEvents = '';
         }
       });
-      (async () => {
-        await refreshPrizes();
-        initInfiniteRoulette();
-        refreshBalance();
-        refreshRecentWins();
-        setInterval(refreshRecentWins, 12000);
-        refreshInventory();
-        setTab('spin');
-      })();
+
+      loadPrizes();
+      initInfiniteRoulette();
+      refreshBalance();
+      refreshInventory();
+      setTab('spin');
     } else {
       console.warn('spinBtn или roulette не найдены');
     }
