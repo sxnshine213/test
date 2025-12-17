@@ -20,7 +20,7 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # на проде лучше ограничить доменом фронта
+    allow_origins=["*"],  # позже можно ограничить доменами
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -33,26 +33,17 @@ if not DATABASE_URL:
 
 START_BALANCE = int(os.environ.get("START_BALANCE", "200"))
 
-# Telegram bot token (нужен для: verify initData + createInvoiceLink + answerPreCheckoutQuery)
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()
-
-# Webhook secret header: X-Telegram-Bot-Api-Secret-Token
 TG_WEBHOOK_SECRET = os.environ.get("TG_WEBHOOK_SECRET", "").strip()
 
-# Разрешить пустой initData (только для тестов)
 ALLOW_GUEST = os.environ.get("ALLOW_GUEST", "0").strip() in ("1", "true", "True", "yes", "YES")
-
-# Максимальный возраст initData (сек)
 INITDATA_MAX_AGE_SEC = int(os.environ.get("INITDATA_MAX_AGE_SEC", str(24 * 3600)))
 
-# Pool
 PG_POOL_MIN = int(os.environ.get("PG_POOL_MIN", "1"))
 PG_POOL_MAX = int(os.environ.get("PG_POOL_MAX", "10"))
 
-# Админ-ключ для отдельного admin.html
 ADMIN_KEY = os.environ.get("ADMIN_KEY", "").strip()
 
-# Должно совпадать с карточками на фронте (есть id=5)
 PRIZES = [
     {"id": 1, "name": "❤️ Сердце", "cost": 15, "weight": 50},
     {"id": 2, "name": "🧸 Мишка", "cost": 25, "weight": 25},
@@ -97,59 +88,70 @@ class TopupCreateReq(BaseModel):
     stars: int
 
 
+class LeaderboardReq(BaseModel):
+    initData: str
+    limit: int = 30
+
+
 class AdminAdjustReq(BaseModel):
     tg_user_id: str
     delta: int
 
 
-# ===== DB init =====
+# ===== DB init (важно: по одной команде) =====
 def init_db():
-    ddl = """
-    CREATE TABLE IF NOT EXISTS users (
-      tg_user_id TEXT PRIMARY KEY,
-      balance INTEGER NOT NULL,
-      created_at BIGINT NOT NULL
-    );
+    statements = [
+        """
+        CREATE TABLE IF NOT EXISTS users (
+          tg_user_id TEXT PRIMARY KEY,
+          balance INTEGER NOT NULL,
+          created_at BIGINT NOT NULL
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS spins (
+          spin_id TEXT PRIMARY KEY,
+          tg_user_id TEXT NOT NULL REFERENCES users(tg_user_id) ON DELETE CASCADE,
+          bet_cost INTEGER NOT NULL,
+          prize_id INTEGER NOT NULL,
+          prize_name TEXT NOT NULL,
+          prize_cost INTEGER NOT NULL,
+          status TEXT NOT NULL,
+          created_at BIGINT NOT NULL
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS inventory (
+          id BIGSERIAL PRIMARY KEY,
+          tg_user_id TEXT NOT NULL REFERENCES users(tg_user_id) ON DELETE CASCADE,
+          prize_id INTEGER NOT NULL,
+          prize_name TEXT NOT NULL,
+          prize_cost INTEGER NOT NULL,
+          created_at BIGINT NOT NULL
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS topups (
+          id BIGSERIAL PRIMARY KEY,
+          tg_user_id TEXT NOT NULL REFERENCES users(tg_user_id) ON DELETE CASCADE,
+          payload TEXT NOT NULL UNIQUE,
+          stars_amount INTEGER NOT NULL,
+          status TEXT NOT NULL,
+          telegram_charge_id TEXT UNIQUE,
+          created_at BIGINT NOT NULL,
+          paid_at BIGINT
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS idx_spins_user_time ON spins(tg_user_id, created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_inv_user_time ON inventory(tg_user_id, created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_topups_user_time ON topups(tg_user_id, created_at)",
+    ]
 
-    CREATE TABLE IF NOT EXISTS spins (
-      spin_id TEXT PRIMARY KEY,
-      tg_user_id TEXT NOT NULL REFERENCES users(tg_user_id) ON DELETE CASCADE,
-      bet_cost INTEGER NOT NULL,
-      prize_id INTEGER NOT NULL,
-      prize_name TEXT NOT NULL,
-      prize_cost INTEGER NOT NULL,
-      status TEXT NOT NULL, -- pending/sold/kept
-      created_at BIGINT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS inventory (
-      id BIGSERIAL PRIMARY KEY,
-      tg_user_id TEXT NOT NULL REFERENCES users(tg_user_id) ON DELETE CASCADE,
-      prize_id INTEGER NOT NULL,
-      prize_name TEXT NOT NULL,
-      prize_cost INTEGER NOT NULL,
-      created_at BIGINT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS topups (
-      id BIGSERIAL PRIMARY KEY,
-      tg_user_id TEXT NOT NULL REFERENCES users(tg_user_id) ON DELETE CASCADE,
-      payload TEXT NOT NULL UNIQUE,
-      stars_amount INTEGER NOT NULL,
-      status TEXT NOT NULL,                 -- created/paid
-      telegram_charge_id TEXT UNIQUE,
-      created_at BIGINT NOT NULL,
-      paid_at BIGINT
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_spins_user_time ON spins(tg_user_id, created_at);
-    CREATE INDEX IF NOT EXISTS idx_inv_user_time ON inventory(tg_user_id, created_at);
-    CREATE INDEX IF NOT EXISTS idx_topups_user_time ON topups(tg_user_id, created_at);
-    """
     with pool.connection() as con:
         with con:
             with con.cursor() as cur:
-                cur.execute(ddl)
+                for st in statements:
+                    cur.execute(st)
 
 
 init_db()
@@ -170,11 +172,6 @@ def _parse_init_data(init_data: str) -> dict:
 
 
 def extract_tg_user_id(init_data: str) -> str:
-    """
-    Для Telegram WebApp:
-    - проверяем подпись initData через ключ HMAC_SHA256("WebAppData", bot_token)
-    - если BOT_TOKEN не задан, делаем fallback парсинг user.id (НЕ рекомендуется)
-    """
     if not init_data:
         if ALLOW_GUEST:
             return "guest"
@@ -187,7 +184,7 @@ def extract_tg_user_id(init_data: str) -> str:
             return "guest"
         raise HTTPException(status_code=401, detail="no user in initData")
 
-    # fallback без проверки подписи (только для дебага)
+    # fallback (только для дебага)
     if not BOT_TOKEN:
         try:
             user = json.loads(user_json)
@@ -217,7 +214,6 @@ def extract_tg_user_id(init_data: str) -> str:
         pairs.append(f"{k}={data[k]}")
     data_check_string = "\n".join(pairs)
 
-    # ВАЖНО: WebAppData (не sha256(bot_token))
     secret_key = hmac.new(b"WebAppData", BOT_TOKEN.encode("utf-8"), hashlib.sha256).digest()
     calc_hash = hmac.new(secret_key, data_check_string.encode("utf-8"), hashlib.sha256).hexdigest()
 
@@ -232,7 +228,7 @@ def extract_tg_user_id(init_data: str) -> str:
 
 
 # ===== Telegram Bot API helper (Stars) =====
-def tg_api(method: str, payload: dict) -> dict:
+def tg_api(method: str, payload: dict):
     if not BOT_TOKEN:
         raise HTTPException(status_code=500, detail="BOT_TOKEN is not set")
 
@@ -261,6 +257,12 @@ def get_or_create_user(cur, tg_user_id: str) -> int:
     cur.execute("SELECT balance FROM users WHERE tg_user_id=%s", (tg_user_id,))
     row = cur.fetchone()
     return int(row[0]) if row else START_BALANCE
+
+
+def mask_uid(uid: str) -> str:
+    s = str(uid)
+    tail = s[-4:] if len(s) >= 4 else s
+    return f"User {tail}"
 
 
 @app.get("/")
@@ -293,19 +295,17 @@ def inventory(req: InventoryReq):
                 )
                 rows = cur.fetchall()
 
-    items = [{
+    return {"items": [{
         "prize_id": int(r[0]),
         "prize_name": r[1],
         "prize_cost": int(r[2]),
         "created_at": int(r[3]),
-    } for r in rows]
-    return {"items": items}
+    } for r in rows]}
 
 
 @app.post("/spin")
 def spin(req: SpinReq):
     uid = extract_tg_user_id(req.initData)
-
     cost = int(req.cost or 25)
     if cost not in (25, 50):
         raise HTTPException(status_code=400, detail="bad cost")
@@ -319,7 +319,6 @@ def spin(req: SpinReq):
             with con.cursor() as cur:
                 get_or_create_user(cur, uid)
 
-                # атомарное списание
                 cur.execute(
                     "UPDATE users SET balance = balance - %s "
                     "WHERE tg_user_id=%s AND balance >= %s "
@@ -337,13 +336,7 @@ def spin(req: SpinReq):
                     (spin_id, uid, cost, int(prize["id"]), str(prize["name"]), int(prize["cost"]), now),
                 )
 
-    return {
-        "spin_id": spin_id,
-        "id": int(prize["id"]),
-        "name": str(prize["name"]),
-        "cost": int(prize["cost"]),
-        "balance": int(new_balance),
-    }
+    return {"spin_id": spin_id, "id": int(prize["id"]), "name": str(prize["name"]), "cost": int(prize["cost"]), "balance": int(new_balance)}
 
 
 @app.post("/claim")
@@ -355,7 +348,6 @@ def claim(req: ClaimReq):
             with con.cursor() as cur:
                 get_or_create_user(cur, uid)
 
-                # блокируем спин, чтобы не было гонок
                 cur.execute(
                     "SELECT prize_id, prize_name, prize_cost, status "
                     "FROM spins WHERE spin_id=%s AND tg_user_id=%s FOR UPDATE",
@@ -367,7 +359,6 @@ def claim(req: ClaimReq):
 
                 prize_id, prize_name, prize_cost, status = int(row[0]), str(row[1]), int(row[2]), str(row[3])
 
-                # идемпотентность
                 if status in ("sold", "kept"):
                     cur.execute("SELECT balance FROM users WHERE tg_user_id=%s", (uid,))
                     bal = int(cur.fetchone()[0])
@@ -382,7 +373,6 @@ def claim(req: ClaimReq):
                     cur.execute("UPDATE spins SET status='sold' WHERE spin_id=%s", (req.spin_id,))
                     return {"ok": True, "status": "sold", "balance": bal, "credited": prize_cost}
 
-                # keep
                 cur.execute(
                     "INSERT INTO inventory (tg_user_id, prize_id, prize_name, prize_cost, created_at) "
                     "VALUES (%s,%s,%s,%s,%s)",
@@ -394,13 +384,41 @@ def claim(req: ClaimReq):
                 return {"ok": True, "status": "kept", "balance": bal}
 
 
-# =========================
-# Telegram Stars Top-up
-# =========================
+@app.post("/leaderboard")
+def leaderboard(req: LeaderboardReq):
+    uid = extract_tg_user_id(req.initData)
+    limit = max(5, min(100, int(req.limit or 30)))
+
+    with pool.connection() as con:
+        with con:
+            with con.cursor() as cur:
+                my_balance = get_or_create_user(cur, uid)
+
+                cur.execute(
+                    "SELECT tg_user_id, balance FROM users "
+                    "ORDER BY balance DESC, created_at ASC LIMIT %s",
+                    (limit,),
+                )
+                rows = cur.fetchall()
+
+                cur.execute("SELECT 1 + COUNT(*) FROM users WHERE balance > %s", (my_balance,))
+                my_rank = int(cur.fetchone()[0])
+
+    items = []
+    for i, r in enumerate(rows, start=1):
+        items.append({
+            "rank": i,
+            "name": mask_uid(r[0]),
+            "balance": int(r[1]),
+            "is_me": str(r[0]) == str(uid),
+        })
+
+    return {"items": items, "me": {"rank": my_rank, "balance": int(my_balance)}}
+
+
 @app.post("/topup/create")
 def topup_create(req: TopupCreateReq):
     uid = extract_tg_user_id(req.initData)
-
     stars = int(req.stars or 0)
     if stars < 1 or stars > 10000:
         raise HTTPException(status_code=400, detail="bad stars amount")
@@ -431,7 +449,6 @@ def topup_create(req: TopupCreateReq):
 
 @app.post("/tg/webhook")
 async def tg_webhook(request: Request):
-    # secret header check (если включен)
     if TG_WEBHOOK_SECRET:
         got = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
         if got != TG_WEBHOOK_SECRET:
@@ -439,7 +456,6 @@ async def tg_webhook(request: Request):
 
     update = await request.json()
 
-    # pre_checkout_query: надо быстро подтвердить
     if "pre_checkout_query" in update:
         q = update["pre_checkout_query"]
         tg_api("answerPreCheckoutQuery", {"pre_checkout_query_id": q["id"], "ok": True})
@@ -448,13 +464,12 @@ async def tg_webhook(request: Request):
     msg = update.get("message") or {}
     sp = msg.get("successful_payment")
     if sp:
-        currency = sp.get("currency")
+        if sp.get("currency") != "XTR":
+            return {"ok": True}
+
         total_amount = int(sp.get("total_amount", 0))
         invoice_payload = sp.get("invoice_payload", "")
         telegram_charge_id = sp.get("telegram_payment_charge_id")
-
-        if currency != "XTR":
-            return {"ok": True}
 
         with pool.connection() as con:
             with con:
@@ -468,17 +483,12 @@ async def tg_webhook(request: Request):
                         return {"ok": True}
 
                     uid, expected, status = str(row[0]), int(row[1]), str(row[2])
-
                     if status == "paid":
                         return {"ok": True}
-
                     if total_amount != expected:
                         return {"ok": True}
 
-                    cur.execute(
-                        "UPDATE users SET balance = balance + %s WHERE tg_user_id=%s",
-                        (expected, uid),
-                    )
+                    cur.execute("UPDATE users SET balance = balance + %s WHERE tg_user_id=%s", (expected, uid))
                     cur.execute(
                         "UPDATE topups SET status='paid', telegram_charge_id=%s, paid_at=%s WHERE payload=%s",
                         (telegram_charge_id, int(time.time()), invoice_payload),
@@ -489,9 +499,6 @@ async def tg_webhook(request: Request):
     return {"ok": True}
 
 
-# =========================
-# Admin API (для отдельного admin.html)
-# =========================
 @app.get("/admin/stats")
 def admin_stats(request: Request):
     require_admin(request)
@@ -522,10 +529,7 @@ def admin_stats(request: Request):
                 cur.execute("SELECT COALESCE(SUM(stars_amount),0) FROM topups WHERE status='paid'")
                 paid_stars_total = int(cur.fetchone()[0])
 
-                cur.execute(
-                    "SELECT COALESCE(SUM(stars_amount),0) FROM topups WHERE status='paid' AND paid_at >= %s",
-                    (day_ago,),
-                )
+                cur.execute("SELECT COALESCE(SUM(stars_amount),0) FROM topups WHERE status='paid' AND paid_at >= %s", (day_ago,))
                 paid_stars_24h = int(cur.fetchone()[0])
 
     return {
