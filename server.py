@@ -424,18 +424,26 @@ def prizes(req: MeReq):
             with con.cursor() as cur:
                 public = extract_tg_user_public(req.initData)
                 get_or_create_user(cur, uid, public)
+
+                # NOTE: order here is important to avoid mapping bugs
                 cur.execute(
                     "SELECT id, name, cost, icon_url "
-                    "FROM prizes WHERE is_active = TRUE "
+                    "FROM prizes WHERE is_active = TRUE AND weight > 0 "
                     "ORDER BY sort_order ASC, id ASC"
                 )
                 rows = cur.fetchall()
 
     items = []
     for r in rows:
-        icon_url = (r[3] or "").strip() or None
-        items.append({"id": int(r[0]), "name": str(r[1]), "icon_url": ((r[2] or "").strip() or None),
-            "cost": int(r[3]), "icon_url": icon_url})
+        # r = (id, name, cost, icon_url)
+        items.append(
+            {
+                "id": int(r[0]),
+                "name": str(r[1]),
+                "cost": int(r[2]),
+                "icon_url": (str(r[3]).strip() if r[3] is not None and str(r[3]).strip() else None),
+            }
+        )
     return {"items": items}
 
 @app.post("/inventory")
