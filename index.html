@@ -316,7 +316,10 @@
     }
     .recent-win__meta{display:flex;flex-direction:column;gap:2px;line-height:1.05;}
     .recent-win__name{font-size: 13px; max-width: 170px; overflow: hidden; text-overflow: ellipsis;}
-    .recent-win__prize{font-size: 11px; opacity: .75; max-width: 170px; overflow: hidden; text-overflow: ellipsis;}
+    .recent-win__prize{font-size: 11px; opacity: .75; max-width: 170px; overflow: hidden; text-overflow: ellipsis; display:flex; align-items:center;}
+
+  
+    .recent-win__prize-icon{width:14px;height:14px;border-radius:3px;object-fit:cover;margin-right:6px;vertical-align:middle;}
 
   </style>
 </head>
@@ -499,6 +502,60 @@
       return data;
     }
 
+
+    // ===== Prizes (icons from backend) =====
+    let PRIZES_BY_ID = {};
+
+    function setPrizes(items) {
+      PRIZES_BY_ID = {};
+      const list = Array.isArray(items) ? items : [];
+      for (const p of list) {
+        if (!p || !p.id) continue;
+        PRIZES_BY_ID[Number(p.id)] = p;
+      }
+    }
+
+    function rebuildRouletteFromPrizes(items) {
+      if (!r) return;
+      const list = Array.isArray(items) ? items : [];
+      if (!list.length) return;
+
+      // Reset infinite-scroll clone state
+      r.dataset.initialized = 'false';
+      r.innerHTML = '';
+
+      for (const p of list) {
+        const item = document.createElement('div');
+        item.className = 'item';
+        item.dataset.id = String(p.id);
+
+        const img = document.createElement('img');
+        img.src = (p.icon_url || '').trim() || giftImageById(p.id);
+        img.alt = 'prize';
+        img.referrerPolicy = 'no-referrer';
+
+        const price = document.createElement('div');
+        price.className = 'price';
+        price.textContent = `⭐ ${p.cost ?? ''}`;
+
+        item.appendChild(img);
+        item.appendChild(price);
+        r.appendChild(item);
+      }
+    }
+
+    async function refreshPrizes() {
+      try {
+        const res = await apiPost('/prizes', { initData: tg?.initData || '' });
+        const items = Array.isArray(res?.items) ? res.items : [];
+        setPrizes(items);
+        rebuildRouletteFromPrizes(items);
+      } catch (e) {
+        // keep fallback (hardcoded items) if backend endpoint not available
+        console.warn('refreshPrizes failed', e);
+      }
+    }
+
     async function refreshBalance() {
       try {
         const me = await apiPost('/me', { initData: tg?.initData || '' });
@@ -560,12 +617,23 @@
         name.className = 'recent-win__name';
         name.textContent = it?.name || 'User';
 
-        const prize = document.createElement('div');
-        prize.className = 'recent-win__prize';
-        prize.textContent = it?.prize || it?.prize_name || '';
+        const prizeText = (it?.prize || it?.prize_name || '').trim();
+        const prizeRow = document.createElement('div');
+        prizeRow.className = 'recent-win__prize';
+        if (it?.icon_url) {
+          const pi = document.createElement('img');
+          pi.className = 'recent-win__prize-icon';
+          pi.src = String(it.icon_url).trim();
+          pi.alt = 'icon';
+          pi.referrerPolicy = 'no-referrer';
+          prizeRow.appendChild(pi);
+        }
+        const pt = document.createElement('span');
+        pt.textContent = prizeText;
+        prizeRow.appendChild(pt);
 
         meta.appendChild(name);
-        if (prize.textContent) meta.appendChild(prize);
+        if (prizeText) meta.appendChild(prizeRow);
 
         el.appendChild(avatarNode);
         el.appendChild(meta);
@@ -583,6 +651,10 @@
     }
 
     function giftImageById(id) {
+      const p = PRIZES_BY_ID && PRIZES_BY_ID[Number(id)];
+      const url = (p && p.icon_url) ? String(p.icon_url).trim() : '';
+      if (url) return url;
+
       const map = {
         1: 'https://emojiapi.dev/api/v1/heart_with_ribbon/128.png',
         2: 'https://emojiapi.dev/api/v1/teddy_bear/128.png',
@@ -609,7 +681,7 @@
         inventoryEmpty.style.display = 'none';
         inventoryList.style.display = '';
         inventoryList.innerHTML = items.map(it => {
-          const img = giftImageById(it.prize_id || it.id);
+          const img = (it && it.icon_url) ? String(it.icon_url).trim() : giftImageById(it.prize_id || it.id);
           const name = it.prize_name || it.name || 'Подарок';
           const cost = it.prize_cost ?? it.cost ?? '';
           const when = it.created_at ? new Date(it.created_at * 1000).toLocaleString() : '';
@@ -789,7 +861,7 @@
         return;
       }
 
-      claimImg.src = giftImageById(prize.id);
+      claimImg.src = (prize && prize.icon_url) ? String(prize.icon_url).trim() : giftImageById(prize.id);
       claimName.textContent = prize.name || 'Подарок';
       claimMeta.textContent = `Продать за ⭐ ${prize.cost} или забрать в инвентарь`;
 
@@ -1005,13 +1077,15 @@
           r.style.pointerEvents = '';
         }
       });
-
-      initInfiniteRoulette();
-      refreshBalance();
-      refreshRecentWins();
-      setInterval(refreshRecentWins, 12000);
-      refreshInventory();
-      setTab('spin');
+      (async () => {
+        await refreshPrizes();
+        initInfiniteRoulette();
+        refreshBalance();
+        refreshRecentWins();
+        setInterval(refreshRecentWins, 12000);
+        refreshInventory();
+        setTab('spin');
+      })();
     } else {
       console.warn('spinBtn или roulette не найдены');
     }

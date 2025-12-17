@@ -67,7 +67,8 @@
     </div>
 
     <div class="row" style="margin-top:10px;">
-      <input id="prizeName" placeholder="Название (например 💎 Алмаз)" style="min-width:260px;flex:2"/>
+      <input id="prizeName" placeholder="Название (например 💎 Алмаз)" style="min-width:220px;flex:2"/>
+      <input id="prizeIconUrl" placeholder="Icon URL (https://.../icon.png)" style="min-width:260px;flex:3"/>
       <input id="prizeCost" placeholder="cost" style="width:120px"/>
       <input id="prizeWeight" placeholder="weight" style="width:120px"/>
       <input id="prizeSort" placeholder="sort" style="width:120px"/>
@@ -110,6 +111,7 @@
   const prizesBox = document.getElementById('prizesBox');
   const prizesStatus = document.getElementById('prizesStatus');
   const prizeNameEl = document.getElementById('prizeName');
+  const prizeIconUrlEl = document.getElementById('prizeIconUrl');
   const prizeCostEl = document.getElementById('prizeCost');
   const prizeWeightEl = document.getElementById('prizeWeight');
   const prizeSortEl = document.getElementById('prizeSort');
@@ -296,6 +298,13 @@
     name.style.width = '100%';
     tdName.appendChild(name);
 
+    const tdIcon = document.createElement('td');
+    const icon = document.createElement('input');
+    icon.value = p.icon_url || '';
+    icon.placeholder = 'https://...';
+    icon.style.width = '260px';
+    tdIcon.appendChild(icon);
+
     const tdCost = document.createElement('td');
     const cost = document.createElement('input');
     cost.value = String(p.cost ?? 0);
@@ -335,6 +344,7 @@
       try {
         const body = {
           name: name.value.trim(),
+          icon_url: (icon.value || '').trim() || null,
           cost: parseInt(cost.value, 10) || 0,
           weight: parseInt(weight.value, 10) || 0,
           is_active: !!active.checked,
@@ -365,6 +375,7 @@
 
     tr.appendChild(tdId);
     tr.appendChild(tdName);
+    tr.appendChild(tdIcon);
     tr.appendChild(tdCost);
     tr.appendChild(tdWeight);
     tr.appendChild(tdSort);
@@ -383,7 +394,7 @@
 
       const table = document.createElement('table');
       const thead = document.createElement('thead');
-      thead.innerHTML = '<tr><th>id</th><th>name</th><th>cost</th><th>weight</th><th>sort</th><th>active</th><th>actions</th></tr>';
+      thead.innerHTML = '<tr><th>id</th><th>name</th><th>icon_url</th><th>cost</th><th>weight</th><th>sort</th><th>active</th><th>actions</th></tr>';
       table.appendChild(thead);
 
       const tbody = document.createElement('tbody');
@@ -403,6 +414,7 @@
     const weight = parseInt((prizeWeightEl?.value || '').trim(), 10);
     const sort = parseInt((prizeSortEl?.value || '').trim(), 10);
     const is_active = !!prizeActiveEl?.checked;
+    const icon_url = (prizeIconUrlEl?.value || '').trim() || null;
 
     if (!name || !Number.isFinite(cost) || !Number.isFinite(weight)) {
       alert('Укажи name, cost и weight.');
@@ -418,11 +430,13 @@
           cost,
           weight,
           is_active,
-          sort_order: Number.isFinite(sort) ? sort : 0
+          sort_order: Number.isFinite(sort) ? sort : 0,
+          icon_url
         })
       });
       prizesStatus.innerHTML = '<span class="ok">OK</span>';
       if (prizeNameEl) prizeNameEl.value = '';
+      if (prizeIconUrlEl) prizeIconUrlEl.value = '';
       if (prizeCostEl) prizeCostEl.value = '';
       if (prizeWeightEl) prizeWeightEl.value = '';
       if (prizeSortEl) prizeSortEl.value = '';

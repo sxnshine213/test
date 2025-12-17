@@ -101,6 +101,7 @@ class AdminAdjustReq(BaseModel):
 
 class PrizeIn(BaseModel):
     name: str
+    icon_url: Optional[str] = None
     cost: int
     weight: int
     is_active: bool = True
@@ -138,6 +139,7 @@ def init_db():
                     CREATE TABLE IF NOT EXISTS prizes (
                       id BIGINT PRIMARY KEY,
                       name TEXT NOT NULL,
+                      icon_url TEXT,
                       cost INTEGER NOT NULL,
                       weight INTEGER NOT NULL,
                       is_active BOOLEAN NOT NULL DEFAULT TRUE,
@@ -147,6 +149,7 @@ def init_db():
                     """
                 )
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_prizes_active_sort ON prizes(is_active, sort_order, id)")
+                cur.execute("ALTER TABLE prizes ADD COLUMN IF NOT EXISTS icon_url TEXT")
 
                 # spins / inventory / topups
                 cur.execute(
@@ -202,11 +205,12 @@ def init_db():
                     now = int(time.time())
                     for p in DEFAULT_PRIZES:
                         cur.execute(
-                            "INSERT INTO prizes (id, name, cost, weight, is_active, sort_order, created_at) "
-                            "VALUES (%s,%s,%s,%s,%s,%s,%s)",
+                            "INSERT INTO prizes (id, name, icon_url, cost, weight, is_active, sort_order, created_at) "
+                            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
                             (
                                 int(p["id"]),
                                 str(p["name"]),
+                                (p.get("icon_url") or None),
                                 int(p["cost"]),
                                 int(p["weight"]),
                                 bool(p.get("is_active", True)),
@@ -382,12 +386,12 @@ def get_or_create_user(cur, tg_user_id: str, public: Optional[dict] = None) -> i
 
 def fetch_active_prizes(cur) -> list[dict]:
     cur.execute(
-        "SELECT id, name, cost, weight FROM prizes "
+        "SELECT id, name, icon_url, cost, weight FROM prizes "
         "WHERE is_active = TRUE AND weight > 0 "
         "ORDER BY sort_order ASC, id ASC"
     )
     rows = cur.fetchall()
-    return [{"id": int(r[0]), "name": str(r[1]), "cost": int(r[2]), "weight": int(r[3])} for r in rows]
+    return [{"id": int(r[0]), "name": str(r[1]), "icon_url": (str(r[2]).strip() if r[2] is not None else None), "cost": int(r[3]), "weight": int(r[4])} for r in rows]
 
 
 # ===== Public API =====
@@ -407,6 +411,33 @@ def me(req: MeReq):
     return {"tg_user_id": uid, "balance": int(bal)}
 
 
+
+
+@app.post("/prizes")
+def prizes(req: MeReq):
+    """
+    Public list of active prizes for the frontend (roulette icons, prices).
+    """
+    uid = extract_tg_user_id(req.initData)
+    with pool.connection() as con:
+        with con:
+            with con.cursor() as cur:
+                public = extract_tg_user_public(req.initData)
+                get_or_create_user(cur, uid, public)
+                cur.execute(
+                    "SELECT id, name, cost, icon_url "
+                    "FROM prizes WHERE is_active = TRUE "
+                    "ORDER BY sort_order ASC, id ASC"
+                )
+                rows = cur.fetchall()
+
+    items = []
+    for r in rows:
+        icon_url = (r[3] or "").strip() or None
+        items.append({"id": int(r[0]), "name": str(r[1]), "icon_url": ((r[2] or "").strip() or None),
+            "cost": int(r[3]), "icon_url": icon_url})
+    return {"items": items}
+
 @app.post("/inventory")
 def inventory(req: InventoryReq):
     uid = extract_tg_user_id(req.initData)
@@ -416,8 +447,8 @@ def inventory(req: InventoryReq):
                 public = extract_tg_user_public(req.initData)
                 get_or_create_user(cur, uid, public)
                 cur.execute(
-                    "SELECT prize_id, prize_name, prize_cost, created_at "
-                    "FROM inventory WHERE tg_user_id=%s "
+                    "SELECT i.prize_id, i.prize_name, i.prize_cost, i.created_at, p.icon_url "
+                    "FROM inventory i LEFT JOIN prizes p ON p.id = i.prize_id WHERE i.tg_user_id=%s "
                     "ORDER BY created_at DESC LIMIT 200",
                     (uid,),
                 )
@@ -428,6 +459,7 @@ def inventory(req: InventoryReq):
         "prize_name": r[1],
         "prize_cost": int(r[2]),
         "created_at": int(r[3]),
+        "icon_url": ((r[4] or "").strip() or None),
     } for r in rows]}
 
 
@@ -462,7 +494,7 @@ def spin(req: SpinReq):
                 prizes = fetch_active_prizes(cur)
                 if not prizes:
                     # fallback (если таблица пуста/всё отключено)
-                    prizes = [{"id": p["id"], "name": p["name"], "cost": p["cost"], "weight": p["weight"]} for p in DEFAULT_PRIZES]
+                    prizes = [{"id": p["id"], "name": p["name"], "icon_url": (p.get("icon_url") or None), "cost": p["cost"], "weight": p["weight"]} for p in DEFAULT_PRIZES]
 
                 prize = random.choices(prizes, weights=[p["weight"] for p in prizes], k=1)[0]
 
@@ -472,7 +504,7 @@ def spin(req: SpinReq):
                     (spin_id, uid, cost, int(prize["id"]), str(prize["name"]), int(prize["cost"]), now),
                 )
 
-    return {"spin_id": spin_id, "id": int(prize["id"]), "name": str(prize["name"]), "cost": int(prize["cost"]), "balance": int(new_balance)}
+    return {"spin_id": spin_id, "id": int(prize["id"]), "name": str(prize["name"]), "icon_url": (prize.get("icon_url") or None), "cost": int(prize["cost"]), "balance": int(new_balance)}
 
 
 @app.post("/claim")
@@ -587,9 +619,9 @@ def recent_wins(req: MeReq):
                 get_or_create_user(cur, uid, public)
 
                 cur.execute(
-                    "SELECT s.tg_user_id, u.username, u.first_name, u.last_name, u.photo_url, s.prize_name "
+                    "SELECT s.tg_user_id, u.username, u.first_name, u.last_name, u.photo_url, s.prize_name, p.icon_url "
                     "FROM spins s "
-                    "JOIN users u ON u.tg_user_id = s.tg_user_id "
+                    "JOIN users u ON u.tg_user_id = s.tg_user_id LEFT JOIN prizes p ON p.id = s.prize_id "
                     "ORDER BY s.created_at DESC LIMIT 20"
                 )
                 rows = cur.fetchall()
@@ -600,7 +632,7 @@ def recent_wins(req: MeReq):
         name = display_name(r[1], r[2], r[3], tg_user_id)
         avatar = (r[4] or "").strip() or None
         prize_name = str(r[5]) if r[5] is not None else ""
-        items.append({"tg_user_id": tg_user_id, "name": name, "avatar": avatar, "prize": prize_name})
+        items.append({"tg_user_id": tg_user_id, "name": name, "avatar": avatar, "prize": prize_name, "icon_url": ((r[6] or "").strip() or None)})
 
     return {"items": items}
 
@@ -866,7 +898,7 @@ def admin_list_prizes(request: Request):
         with con:
             with con.cursor() as cur:
                 cur.execute(
-                    "SELECT id, name, cost, weight, is_active, sort_order, created_at "
+                    "SELECT id, name, icon_url, cost, weight, is_active, sort_order, created_at "
                     "FROM prizes ORDER BY sort_order ASC, id ASC"
                 )
                 rows = cur.fetchall()
@@ -875,11 +907,12 @@ def admin_list_prizes(request: Request):
         items.append({
             "id": int(r[0]),
             "name": str(r[1]),
-            "cost": int(r[2]),
-            "weight": int(r[3]),
-            "is_active": bool(r[4]),
-            "sort_order": int(r[5]),
-            "created_at": int(r[6]),
+            "icon_url": ((r[2] or "").strip() or None),
+            "cost": int(r[3]),
+            "weight": int(r[4]),
+            "is_active": bool(r[5]),
+            "sort_order": int(r[6]),
+            "created_at": int(r[7]),
         })
     return {"items": items}
 
@@ -896,9 +929,9 @@ def admin_create_prize(request: Request, req: PrizeIn):
                 new_id = int(cur.fetchone()[0])
 
                 cur.execute(
-                    "INSERT INTO prizes (id, name, cost, weight, is_active, sort_order, created_at) "
-                    "VALUES (%s,%s,%s,%s,%s,%s,%s)",
-                    (new_id, req.name, int(req.cost), int(req.weight), bool(req.is_active), int(req.sort_order), now),
+                    "INSERT INTO prizes (id, name, icon_url, cost, weight, is_active, sort_order, created_at) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
+                    (new_id, req.name, (req.icon_url or None), int(req.cost), int(req.weight), bool(req.is_active), int(req.sort_order), now),
                 )
     return {"id": new_id, "created_at": now, **req.model_dump()}
 
@@ -910,9 +943,9 @@ def admin_update_prize(request: Request, prize_id: int, req: PrizeIn):
         with con:
             with con.cursor() as cur:
                 cur.execute(
-                    "UPDATE prizes SET name=%s, cost=%s, weight=%s, is_active=%s, sort_order=%s "
+                    "UPDATE prizes SET name=%s, icon_url=%s, cost=%s, weight=%s, is_active=%s, sort_order=%s "
                     "WHERE id=%s RETURNING created_at",
-                    (req.name, int(req.cost), int(req.weight), bool(req.is_active), int(req.sort_order), int(prize_id)),
+                    (req.name, (req.icon_url or None), int(req.cost), int(req.weight), bool(req.is_active), int(req.sort_order), int(prize_id)),
                 )
                 row = cur.fetchone()
                 if not row:
