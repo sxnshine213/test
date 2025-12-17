@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>🎁 Случайный подарок</title>
+  <title>archicasino</title>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
 
   <style>
@@ -30,13 +30,6 @@
       align-items: center;
       font-weight: 700;
       font-size: 16px;
-    }
-    .ad {
-      background: #162235;
-      border-radius: 12px;
-      padding: 10px;
-      font-size: 12px;
-      opacity: 0.9;
     }
     .tabs { display: flex; gap: 10px; }
     .pill {
@@ -153,17 +146,9 @@
       align-items: center;
     }
     .inv-card img { width: 34px; height: 34px; }
-    .inv-card img.avatar { border-radius: 50%; object-fit: cover; background: rgba(255,255,255,0.12); }
-    .avatar-ph {
-      width: 34px; height: 34px;
-      border-radius: 50%;
-      display: flex; align-items: center; justify-content: center;
-      background: rgba(255,255,255,0.10);
-      font-size: 12px;
-      font-weight: 900;
-      color: rgba(255,255,255,0.92);
-      flex: 0 0 34px;
-    }
+    .lb-avatar{width:34px;height:34px;border-radius:50%;object-fit:cover;background: rgba(255,255,255,0.12);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:900;flex:0 0 auto;}
+    .lb-avatar--ph{color: rgba(255,255,255,0.9);}
+
     .inv-meta { display: flex; flex-direction: column; gap: 2px; }
     .inv-name { font-size: 12px; font-weight: 800; }
     .inv-sub { font-size: 11px; opacity: 0.75; }
@@ -276,13 +261,70 @@
     .topup-cancel { background:#162235; }
     .topup-buy { background:#5b8ecb; }
     .topup-note { margin-top:10px; font-size:12px; opacity:.7; }
+
+    /* Recent wins */
+    .recent-wins{
+      margin: 10px 0 0;
+      padding: 10px 10px;
+      border-radius: 14px;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.08);
+    }
+    .recent-wins__title{
+      font-size: 12px;
+      opacity: .75;
+      margin-bottom: 8px;
+      font-weight: 800;
+    }
+    .recent-wins__list{
+      display: flex;
+      gap: 10px;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: none;
+    }
+    .recent-wins__list::-webkit-scrollbar{ display:none; }
+    .recent-win{
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px;
+      border-radius: 999px;
+      background: rgba(0,0,0,0.25);
+      border: 1px solid rgba(255,255,255,0.08);
+      white-space: nowrap;
+      flex: 0 0 auto;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    .recent-win__avatar{
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      object-fit: cover;
+      background: rgba(255,255,255,0.12);
+      display: block;
+      flex: 0 0 auto;
+    }
+    .recent-win__avatar--ph{
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      font-size: 11px;
+      font-weight: 900;
+      color: rgba(255,255,255,0.9);
+    }
+    .recent-win__meta{display:flex;flex-direction:column;gap:2px;line-height:1.05;}
+    .recent-win__name{font-size: 13px; max-width: 170px; overflow: hidden; text-overflow: ellipsis;}
+    .recent-win__prize{font-size: 11px; opacity: .75; max-width: 170px; overflow: hidden; text-overflow: ellipsis;}
+
   </style>
 </head>
 
 <body>
   <div class="app">
     <div class="header">
-      <div>Случайный подарок</div>
+      <div>archicasino</div>
       <div style="display:flex; gap:8px; align-items:center;">
         <div id="balanceBadge" style="font-weight:800;font-size:13px;background:#162235;padding:6px 10px;border-radius:999px;">⭐ …</div>
         <div id="topupBtn" style="font-weight:900;font-size:13px;background:#5b8ecb;padding:6px 10px;border-radius:999px;cursor:pointer;user-select:none;-webkit-user-select:none;">
@@ -292,7 +334,11 @@
     </div>
 
     <div id="screenRoulette">
-      <div class="ad">🔐 Попробуйте VPN бесплатно!<br>▶️ Смотрите YouTube и играйте через Дискорд без тормозов</div>
+<div id="recentWins" class="recent-wins" style="display:none;">
+        <div class="recent-wins__title">Недавние выигрыши</div>
+        <div id="recentWinsList" class="recent-wins__list"></div>
+      </div>
+
 
       <div class="tabs">
         <div class="pill active" data-cost="25">25 ⭐</div>
@@ -462,14 +508,78 @@
       }
     }
 
+    // ===== Recent wins =====
+    const recentWinsWrap = document.getElementById('recentWins');
+    const recentWinsList = document.getElementById('recentWinsList');
 
     function initialsFromName(name) {
-      const s = String(name || '').trim().replace(/^@/, '');
+      const s = (name || '').trim().replace(/^@/, '');
       if (!s) return 'U';
       const parts = s.split(/\s+/).filter(Boolean);
       const a = (parts[0] || '')[0] || 'U';
       const b = (parts[1] || '')[0] || '';
       return (a + b).toUpperCase();
+    }
+
+    function renderRecentWins(items) {
+      if (!recentWinsWrap || !recentWinsList) return;
+
+      const list = Array.isArray(items) ? items : [];
+      if (!list.length) {
+        recentWinsWrap.style.display = 'none';
+        recentWinsList.innerHTML = '';
+        return;
+      }
+
+      recentWinsWrap.style.display = '';
+      recentWinsList.innerHTML = '';
+
+      for (const it of list) {
+        const el = document.createElement('div');
+        el.className = 'recent-win';
+
+        let avatarNode;
+        if (it && it.avatar) {
+          const img = document.createElement('img');
+          img.className = 'recent-win__avatar';
+          img.src = it.avatar;
+          img.alt = it.name || 'user';
+          img.referrerPolicy = 'no-referrer';
+          avatarNode = img;
+        } else {
+          const ph = document.createElement('div');
+          ph.className = 'recent-win__avatar recent-win__avatar--ph';
+          ph.textContent = initialsFromName(it?.name);
+          avatarNode = ph;
+        }
+
+        const meta = document.createElement('div');
+        meta.className = 'recent-win__meta';
+
+        const name = document.createElement('div');
+        name.className = 'recent-win__name';
+        name.textContent = it?.name || 'User';
+
+        const prize = document.createElement('div');
+        prize.className = 'recent-win__prize';
+        prize.textContent = it?.prize || it?.prize_name || '';
+
+        meta.appendChild(name);
+        if (prize.textContent) meta.appendChild(prize);
+
+        el.appendChild(avatarNode);
+        el.appendChild(meta);
+        recentWinsList.appendChild(el);
+      }
+    }
+
+    async function refreshRecentWins() {
+      try {
+        const res = await apiPost('/recent_wins', { initData: tg?.initData || '' });
+        renderRecentWins(res?.items || []);
+      } catch (_) {
+        // silently ignore
+      }
     }
 
     function giftImageById(id) {
@@ -535,15 +645,14 @@
 
         topList.innerHTML = items.map(it => {
           const badge = it.is_me ? ' style="box-shadow: inset 0 0 0 2px rgba(74,163,255,0.55)"' : '';
-          const safeName = it.name || 'User';
-          const avatar = it.avatar
-            ? `<img class="avatar" src="${it.avatar}" alt="ava" referrerpolicy="no-referrer"/>`
-            : `<div class="avatar-ph">${initialsFromName(safeName)}</div>`;
+          const av = it.avatar
+            ? `<img class="lb-avatar" src="${it.avatar}" alt="avatar" referrerpolicy="no-referrer" />`
+            : `<div class="lb-avatar lb-avatar--ph">${initialsFromName(it.name)}</div>`;
           return `
             <div class="inv-card"${badge}>
-              ${avatar}
+              ${av}
               <div class="inv-meta" style="width:100%;">
-                <div class="inv-name">#${it.rank} • ${safeName}</div>
+                <div class="inv-name">#${it.rank} • ${it.name}</div>
                 <div class="inv-sub">⭐ ${it.balance}</div>
               </div>
             </div>
@@ -554,7 +663,6 @@
         topList.innerHTML = '';
       }
     }
-
 
     function setTab(which) {
       const isInv = which === 'inv';
@@ -677,6 +785,7 @@
         alert('Ошибка: /spin не вернул spin_id. Обнови бэкенд /spin.');
         btn.disabled = false;
         pendingPrize = null;
+        refreshRecentWins();
         return;
       }
 
@@ -731,6 +840,7 @@
 
         pendingSpinId = null;
         pendingPrize = null;
+        refreshRecentWins();
         btn.disabled = false;
 
       } catch (e) {
@@ -886,6 +996,7 @@
 
           await spinToPrize(prize);
           openClaim(prize);
+          setTimeout(refreshRecentWins, 300);
 
         } catch (e) {
           alert('Ошибка: ' + (e?.message || e));
@@ -897,6 +1008,8 @@
 
       initInfiniteRoulette();
       refreshBalance();
+      refreshRecentWins();
+      setInterval(refreshRecentWins, 12000);
       refreshInventory();
       setTab('spin');
     } else {

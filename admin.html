@@ -62,6 +62,30 @@
 
   <div class="card">
     <div class="row" style="justify-content:space-between;">
+      <div style="font-weight:900;">🎁 Призы</div>
+      <button class="secondary" id="loadPrizes">Обновить</button>
+    </div>
+
+    <div class="row" style="margin-top:10px;">
+      <input id="prizeName" placeholder="Название (например 💎 Алмаз)" style="min-width:260px;flex:2"/>
+      <input id="prizeCost" placeholder="cost" style="width:120px"/>
+      <input id="prizeWeight" placeholder="weight" style="width:120px"/>
+      <input id="prizeSort" placeholder="sort" style="width:120px"/>
+      <label class="muted" style="display:flex;align-items:center;gap:8px;">
+        <input id="prizeActive" type="checkbox" checked style="width:auto;"/>
+        active
+      </label>
+      <button id="createPrize">Создать</button>
+      <div id="prizesStatus" class="muted"></div>
+    </div>
+
+    <div id="prizesBox"></div>
+  </div>
+
+
+
+  <div class="card">
+    <div class="row" style="justify-content:space-between;">
       <div style="font-weight:900;">💳 Topups</div>
       <button class="secondary" id="loadTopups">Обновить</button>
     </div>
@@ -83,6 +107,14 @@
   const userTables = document.getElementById('userTables');
 
   const topupsBox = document.getElementById('topupsBox');
+  const prizesBox = document.getElementById('prizesBox');
+  const prizesStatus = document.getElementById('prizesStatus');
+  const prizeNameEl = document.getElementById('prizeName');
+  const prizeCostEl = document.getElementById('prizeCost');
+  const prizeWeightEl = document.getElementById('prizeWeight');
+  const prizeSortEl = document.getElementById('prizeSort');
+  const prizeActiveEl = document.getElementById('prizeActive');
+
 
   function loadCfg() {
     apiBaseEl.value = localStorage.getItem('admin_api_base') || 'https://test-u2mr.onrender.com';
@@ -251,6 +283,157 @@
     }
   }
 
+
+  function prizeRow(p) {
+    const tr = document.createElement('tr');
+
+    const tdId = document.createElement('td');
+    tdId.textContent = String(p.id);
+
+    const tdName = document.createElement('td');
+    const name = document.createElement('input');
+    name.value = p.name || '';
+    name.style.width = '100%';
+    tdName.appendChild(name);
+
+    const tdCost = document.createElement('td');
+    const cost = document.createElement('input');
+    cost.value = String(p.cost ?? 0);
+    cost.style.width = '90px';
+    tdCost.appendChild(cost);
+
+    const tdWeight = document.createElement('td');
+    const weight = document.createElement('input');
+    weight.value = String(p.weight ?? 0);
+    weight.style.width = '90px';
+    tdWeight.appendChild(weight);
+
+    const tdSort = document.createElement('td');
+    const sort = document.createElement('input');
+    sort.value = String(p.sort_order ?? 0);
+    sort.style.width = '90px';
+    tdSort.appendChild(sort);
+
+    const tdActive = document.createElement('td');
+    const active = document.createElement('input');
+    active.type = 'checkbox';
+    active.checked = !!p.is_active;
+    tdActive.appendChild(active);
+
+    const tdActions = document.createElement('td');
+    const btnSave = document.createElement('button');
+    btnSave.textContent = 'Сохранить';
+    btnSave.className = 'secondary';
+    btnSave.style.marginRight = '8px';
+
+    const btnDel = document.createElement('button');
+    btnDel.textContent = 'Удалить';
+    btnDel.style.background = '#B64444';
+
+    btnSave.onclick = async () => {
+      prizesStatus.textContent = 'сохранение...';
+      try {
+        const body = {
+          name: name.value.trim(),
+          cost: parseInt(cost.value, 10) || 0,
+          weight: parseInt(weight.value, 10) || 0,
+          is_active: !!active.checked,
+          sort_order: parseInt(sort.value, 10) || 0
+        };
+        await api('/admin/prizes/' + encodeURIComponent(p.id), { method:'PUT', body: JSON.stringify(body) });
+        prizesStatus.innerHTML = '<span class="ok">OK</span>';
+        await loadPrizes();
+      } catch (e) {
+        prizesStatus.innerHTML = `<span class="bad">ERR</span> • ${e.message}`;
+      }
+    };
+
+    btnDel.onclick = async () => {
+      if (!confirm('Удалить приз #' + p.id + '?')) return;
+      prizesStatus.textContent = 'удаление...';
+      try {
+        await api('/admin/prizes/' + encodeURIComponent(p.id), { method:'DELETE' });
+        prizesStatus.innerHTML = '<span class="ok">OK</span>';
+        await loadPrizes();
+      } catch (e) {
+        prizesStatus.innerHTML = `<span class="bad">ERR</span> • ${e.message}`;
+      }
+    };
+
+    tdActions.appendChild(btnSave);
+    tdActions.appendChild(btnDel);
+
+    tr.appendChild(tdId);
+    tr.appendChild(tdName);
+    tr.appendChild(tdCost);
+    tr.appendChild(tdWeight);
+    tr.appendChild(tdSort);
+    tr.appendChild(tdActive);
+    tr.appendChild(tdActions);
+    return tr;
+  }
+
+  async function loadPrizes() {
+    if (!prizesBox) return;
+    prizesStatus.textContent = 'загрузка...';
+    prizesBox.innerHTML = '';
+    try {
+      const d = await api('/admin/prizes');
+      const items = d.items || [];
+
+      const table = document.createElement('table');
+      const thead = document.createElement('thead');
+      thead.innerHTML = '<tr><th>id</th><th>name</th><th>cost</th><th>weight</th><th>sort</th><th>active</th><th>actions</th></tr>';
+      table.appendChild(thead);
+
+      const tbody = document.createElement('tbody');
+      items.forEach(p => tbody.appendChild(prizeRow(p)));
+      table.appendChild(tbody);
+
+      prizesBox.appendChild(table);
+      prizesStatus.innerHTML = `<span class="ok">OK</span> • ${items.length}`;
+    } catch (e) {
+      prizesStatus.innerHTML = `<span class="bad">ERR</span> • ${e.message}`;
+    }
+  }
+
+  async function createPrize() {
+    const name = (prizeNameEl?.value || '').trim();
+    const cost = parseInt((prizeCostEl?.value || '').trim(), 10);
+    const weight = parseInt((prizeWeightEl?.value || '').trim(), 10);
+    const sort = parseInt((prizeSortEl?.value || '').trim(), 10);
+    const is_active = !!prizeActiveEl?.checked;
+
+    if (!name || !Number.isFinite(cost) || !Number.isFinite(weight)) {
+      alert('Укажи name, cost и weight.');
+      return;
+    }
+
+    prizesStatus.textContent = 'создание...';
+    try {
+      await api('/admin/prizes', {
+        method: 'POST',
+        body: JSON.stringify({
+          name,
+          cost,
+          weight,
+          is_active,
+          sort_order: Number.isFinite(sort) ? sort : 0
+        })
+      });
+      prizesStatus.innerHTML = '<span class="ok">OK</span>';
+      if (prizeNameEl) prizeNameEl.value = '';
+      if (prizeCostEl) prizeCostEl.value = '';
+      if (prizeWeightEl) prizeWeightEl.value = '';
+      if (prizeSortEl) prizeSortEl.value = '';
+      if (prizeActiveEl) prizeActiveEl.checked = true;
+      await loadPrizes();
+    } catch (e) {
+      prizesStatus.innerHTML = `<span class="bad">ERR</span> • ${e.message}`;
+    }
+  }
+
+
   async function loadTopups() {
     topupsBox.innerHTML = '<div class="muted">загрузка...</div>';
     try {
@@ -278,6 +461,10 @@
   loadCfg();
   loadStats();
   loadTopups();
+
+  document.getElementById('loadPrizes')?.addEventListener('click', loadPrizes);
+  document.getElementById('createPrize')?.addEventListener('click', createPrize);
+
 </script>
 </body>
 </html>
