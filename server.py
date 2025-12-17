@@ -7,7 +7,7 @@ import hmac
 import hashlib
 import urllib.request
 from urllib.parse import parse_qsl
-from typing import Literal, Optional, Tuple, Dict, Any
+from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -98,6 +98,22 @@ class AdminAdjustReq(BaseModel):
     delta: int
 
 
+
+
+class PrizeCreateReq(BaseModel):
+    name: str
+    cost: int
+    weight: int = 1
+    is_active: bool = True
+    sort_order: int = 0
+
+
+class PrizeUpdateReq(BaseModel):
+    name: str
+    cost: int
+    weight: int = 1
+    is_active: bool = True
+    sort_order: int = 0
 # ===== DB init (важно: по одной команде) =====
 def init_db():
     statements = [
@@ -108,13 +124,25 @@ def init_db():
           created_at BIGINT NOT NULL
         )
         """,
+
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS first_name TEXT",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_name TEXT",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS photo_url TEXT",
         """
-        ALTER TABLE users
-          ADD COLUMN IF NOT EXISTS username TEXT,
-          ADD COLUMN IF NOT EXISTS first_name TEXT,
-          ADD COLUMN IF NOT EXISTS last_name TEXT,
-          ADD COLUMN IF NOT EXISTS photo_url TEXT
+        CREATE TABLE IF NOT EXISTS prizes (
+          id SERIAL PRIMARY KEY,
+          name TEXT NOT NULL,
+          cost INTEGER NOT NULL,
+          weight INTEGER NOT NULL DEFAULT 1,
+          is_active BOOLEAN NOT NULL DEFAULT TRUE,
+          sort_order INTEGER NOT NULL DEFAULT 0,
+          created_at BIGINT NOT NULL,
+          updated_at BIGINT NOT NULL
+        )
         """,
+        "CREATE INDEX IF NOT EXISTS idx_prizes_active ON prizes(is_active, sort_order, id)",
+
 
         """
         CREATE TABLE IF NOT EXISTS spins (
@@ -151,7 +179,7 @@ def init_db():
         )
         """,
         "CREATE INDEX IF NOT EXISTS idx_spins_user_time ON spins(tg_user_id, created_at)",
-        "CREATE INDEX IF NOT EXISTS idx_spins_created_at ON spins(created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_spins_time ON spins(created_at)",
         "CREATE INDEX IF NOT EXISTS idx_inv_user_time ON inventory(tg_user_id, created_at)",
         "CREATE INDEX IF NOT EXISTS idx_topups_user_time ON topups(tg_user_id, created_at)",
     ]
@@ -161,6 +189,22 @@ def init_db():
             with con.cursor() as cur:
                 for st in statements:
                     cur.execute(st)
+
+
+                # Seed prizes from PRIZES if table is empty
+                try:
+                    cur.execute("SELECT COUNT(*) FROM prizes")
+                    cnt = int(cur.fetchone()[0])
+                    if cnt == 0:
+                        now = int(time.time())
+                        for i, p in enumerate(PRIZES, start=1):
+                            cur.execute(
+                                "INSERT INTO prizes (id, name, cost, weight, is_active, sort_order, created_at, updated_at) "
+                                "VALUES (%s,%s,%s,%s,TRUE,%s,%s,%s)",
+                                (int(p["id"]), str(p["name"]), int(p["cost"]), int(p["weight"]), i, now, now),
+                            )
+                except Exception:
+                    pass
 
 
 init_db()
@@ -180,29 +224,27 @@ def _parse_init_data(init_data: str) -> dict:
     return dict(parse_qsl(init_data, keep_blank_values=True))
 
 
-
-def extract_tg_user(init_data: str) -> Tuple[str, Optional[Dict[str, Any]]]:
-    """Verify WebApp initData and return (tg_user_id, user_dict)."""
+def extract_tg_user_id(init_data: str) -> str:
     if not init_data:
         if ALLOW_GUEST:
-            return "guest", None
+            return "guest"
         raise HTTPException(status_code=401, detail="initData required")
 
     data = _parse_init_data(init_data)
     user_json = data.get("user")
     if not user_json:
         if ALLOW_GUEST:
-            return "guest", None
+            return "guest"
         raise HTTPException(status_code=401, detail="no user in initData")
 
     # fallback (только для дебага)
     if not BOT_TOKEN:
         try:
             user = json.loads(user_json)
-            return str(user.get("id", "guest")), user
+            return str(user.get("id", "guest"))
         except Exception:
             if ALLOW_GUEST:
-                return "guest", None
+                return "guest"
             raise HTTPException(status_code=401, detail="bad initData")
 
     their_hash = data.get("hash")
@@ -233,14 +275,32 @@ def extract_tg_user(init_data: str) -> Tuple[str, Optional[Dict[str, Any]]]:
 
     try:
         user = json.loads(user_json)
-        return str(user.get("id")), user
+        return str(user.get("id"))
     except Exception:
         raise HTTPException(status_code=401, detail="bad user json")
 
 
-def extract_tg_user_id(init_data: str) -> str:
-    uid, _ = extract_tg_user(init_data)
-    return uid
+def extract_tg_user_public(init_data: str) -> dict | None:
+    """
+    Extract public user fields from Telegram WebApp initData.user JSON.
+    Assumes initData already validated by extract_tg_user_id() in the calling path.
+    """
+    if not init_data:
+        return None
+    try:
+        data = _parse_init_data(init_data)
+        user_json = data.get("user")
+        if not user_json:
+            return None
+        user = json.loads(user_json)
+        return {
+            "username": user.get("username"),
+            "first_name": user.get("first_name"),
+            "last_name": user.get("last_name"),
+            "photo_url": user.get("photo_url"),
+        }
+    except Exception:
+        return None
 
 
 
@@ -265,21 +325,59 @@ def tg_api(method: str, payload: dict):
 
 
 # ===== DB helpers =====
-def get_or_create_user(cur, tg_user_id: str) -> int:
+def get_or_create_user(cur, tg_user_id: str, public: dict | None = None) -> int:
     cur.execute(
         "INSERT INTO users (tg_user_id, balance, created_at) "
         "VALUES (%s, %s, %s) ON CONFLICT (tg_user_id) DO NOTHING",
         (tg_user_id, START_BALANCE, int(time.time())),
     )
+
+    if public:
+        cur.execute(
+            "UPDATE users SET "
+            "username = COALESCE(%s, username), "
+            "first_name = COALESCE(%s, first_name), "
+            "last_name = COALESCE(%s, last_name), "
+            "photo_url = COALESCE(%s, photo_url) "
+            "WHERE tg_user_id = %s",
+            (
+                public.get("username"),
+                public.get("first_name"),
+                public.get("last_name"),
+                public.get("photo_url"),
+                tg_user_id,
+            ),
+        )
+
     cur.execute("SELECT balance FROM users WHERE tg_user_id=%s", (tg_user_id,))
     row = cur.fetchone()
     return int(row[0]) if row else START_BALANCE
+
+
 
 
 def mask_uid(uid: str) -> str:
     s = str(uid)
     tail = s[-4:] if len(s) >= 4 else s
     return f"User {tail}"
+
+
+def display_name_from_row(username: str | None, first_name: str | None, last_name: str | None, tg_user_id: str) -> str:
+    u = (username or "").strip()
+    if u:
+        return "@" + u.lstrip("@")
+    full = ((first_name or "").strip() + " " + (last_name or "").strip()).strip()
+    return full if full else mask_uid(tg_user_id)
+
+
+def get_active_prizes(cur) -> list[dict]:
+    cur.execute(
+        "SELECT id, name, cost, weight FROM prizes "
+        "WHERE is_active = TRUE AND weight > 0 "
+        "ORDER BY sort_order ASC, id ASC"
+    )
+    rows = cur.fetchall()
+    return [{"id": int(r[0]), "name": str(r[1]), "cost": int(r[2]), "weight": int(r[3])} for r in rows]
 
 
 @app.get("/")
@@ -289,27 +387,12 @@ def root():
 
 @app.post("/me")
 def me(req: MeReq):
-    uid, user = extract_tg_user(req.initData)
+    uid = extract_tg_user_id(req.initData)
+    public = extract_tg_user_public(req.initData)
     with pool.connection() as con:
         with con:
             with con.cursor() as cur:
-                bal = get_or_create_user(cur, uid)
-
-                # save Telegram public profile (if provided)
-                if user and uid != "guest":
-                    username = user.get("username")
-                    first_name = user.get("first_name")
-                    last_name = user.get("last_name")
-                    photo_url = user.get("photo_url")
-
-                    cur.execute(
-                        "UPDATE users SET username = COALESCE(%s, username), "
-                        "first_name = COALESCE(%s, first_name), "
-                        "last_name = COALESCE(%s, last_name), "
-                        "photo_url = COALESCE(%s, photo_url) "
-                        "WHERE tg_user_id=%s",
-                        (username, first_name, last_name, photo_url, uid),
-                    )
+                bal = get_or_create_user(cur, uid, public)
     return {"tg_user_id": uid, "balance": int(bal)}
 
 
@@ -336,62 +419,26 @@ def inventory(req: InventoryReq):
     } for r in rows]}
 
 
-
-@app.post("/recent_wins")
-def recent_wins(req: MeReq):
-    # only to enforce initData verification (and allow guest if enabled)
-    extract_tg_user_id(req.initData)
-
-    with pool.connection() as con:
-        with con:
-            with con.cursor() as cur:
-                cur.execute(
-                    "SELECT u.tg_user_id, u.username, u.first_name, u.last_name, u.photo_url, s.prize_name, s.created_at "
-                    "FROM spins s JOIN users u ON u.tg_user_id = s.tg_user_id "
-                    "ORDER BY s.created_at DESC LIMIT 20"
-                )
-                rows = cur.fetchall()
-
-    items = []
-    for r in rows:
-        tg_user_id = str(r[0])
-        username = r[1]
-        first_name = r[2]
-        last_name = r[3]
-        photo_url = r[4]
-        prize_name = r[5]
-
-        if username:
-            name = f"@{username}"
-        else:
-            full = f"{first_name or ''} {last_name or ''}".strip()
-            name = full if full else mask_uid(tg_user_id)
-
-        items.append({
-            "tg_user_id": tg_user_id,
-            "name": name,
-            "avatar": photo_url,
-            "prize": prize_name,
-        })
-
-    return {"items": items}
-
-
 @app.post("/spin")
 def spin(req: SpinReq):
     uid = extract_tg_user_id(req.initData)
+    public = extract_tg_user_public(req.initData)
     cost = int(req.cost or 25)
     if cost not in (25, 50):
         raise HTTPException(status_code=400, detail="bad cost")
 
-    prize = random.choices(PRIZES, weights=[p["weight"] for p in PRIZES], k=1)[0]
     spin_id = str(uuid.uuid4())
     now = int(time.time())
 
     with pool.connection() as con:
         with con:
             with con.cursor() as cur:
-                get_or_create_user(cur, uid)
+                get_or_create_user(cur, uid, public)
+
+                prizes = get_active_prizes(cur)
+                if not prizes:
+                    raise HTTPException(status_code=500, detail="no active prizes configured")
+                prize = random.choices(prizes, weights=[p["weight"] for p in prizes], k=1)[0]
 
                 cur.execute(
                     "UPDATE users SET balance = balance - %s "
@@ -411,7 +458,6 @@ def spin(req: SpinReq):
                 )
 
     return {"spin_id": spin_id, "id": int(prize["id"]), "name": str(prize["name"]), "cost": int(prize["cost"]), "balance": int(new_balance)}
-
 
 @app.post("/claim")
 def claim(req: ClaimReq):
@@ -461,15 +507,16 @@ def claim(req: ClaimReq):
 @app.post("/leaderboard")
 def leaderboard(req: LeaderboardReq):
     uid = extract_tg_user_id(req.initData)
+    public = extract_tg_user_public(req.initData)
     limit = max(5, min(100, int(req.limit or 30)))
 
     with pool.connection() as con:
         with con:
             with con.cursor() as cur:
-                my_balance = get_or_create_user(cur, uid)
+                my_balance = get_or_create_user(cur, uid, public)
 
                 cur.execute(
-                    "SELECT tg_user_id, balance FROM users "
+                    "SELECT tg_user_id, balance, username, first_name, last_name, photo_url FROM users "
                     "ORDER BY balance DESC, created_at ASC LIMIT %s",
                     (limit,),
                 )
@@ -480,14 +527,52 @@ def leaderboard(req: LeaderboardReq):
 
     items = []
     for i, r in enumerate(rows, start=1):
+        tg_user_id = str(r[0])
         items.append({
             "rank": i,
-            "name": mask_uid(r[0]),
+            "name": display_name_from_row(r[2], r[3], r[4], tg_user_id),
+            "avatar": (str(r[5]).strip() if r[5] else None),
             "balance": int(r[1]),
-            "is_me": str(r[0]) == str(uid),
+            "is_me": tg_user_id == str(uid),
         })
 
     return {"items": items, "me": {"rank": my_rank, "balance": int(my_balance)}}
+
+
+
+@app.post("/recent_wins")
+def recent_wins(req: MeReq):
+    """Recent spins with public display name + avatar + prize."""
+    uid = extract_tg_user_id(req.initData)
+
+    with pool.connection() as con:
+        with con:
+            with con.cursor() as cur:
+                public = extract_tg_user_public(req.initData)
+                get_or_create_user(cur, uid, public)
+
+                cur.execute(
+                    "SELECT s.tg_user_id, u.username, u.first_name, u.last_name, u.photo_url, "
+                    "       s.prize_id, s.prize_name, s.prize_cost, s.created_at "
+                    "FROM spins s JOIN users u ON u.tg_user_id = s.tg_user_id "
+                    "ORDER BY s.created_at DESC LIMIT 20"
+                )
+                rows = cur.fetchall()
+
+    items = []
+    for r in rows:
+        tg_user_id = str(r[0])
+        items.append({
+            "tg_user_id": tg_user_id,
+            "name": display_name_from_row(r[1], r[2], r[3], tg_user_id),
+            "avatar": (str(r[4]).strip() if r[4] else None),
+            "prize_id": int(r[5]),
+            "prize_name": str(r[6]),
+            "prize_cost": int(r[7]),
+            "created_at": int(r[8]),
+        })
+
+    return {"items": items}
 
 
 @app.post("/topup/create")
@@ -572,6 +657,90 @@ async def tg_webhook(request: Request):
 
     return {"ok": True}
 
+
+
+
+@app.get("/admin/prizes")
+def admin_prizes(request: Request):
+    require_admin(request)
+    with pool.connection() as con:
+        with con:
+            with con.cursor() as cur:
+                cur.execute(
+                    "SELECT id, name, cost, weight, is_active, sort_order, created_at, updated_at "
+                    "FROM prizes ORDER BY sort_order ASC, id ASC"
+                )
+                rows = cur.fetchall()
+    return {"items": [{
+        "id": int(r[0]),
+        "name": str(r[1]),
+        "cost": int(r[2]),
+        "weight": int(r[3]),
+        "is_active": bool(r[4]),
+        "sort_order": int(r[5]),
+        "created_at": int(r[6]),
+        "updated_at": int(r[7]),
+    } for r in rows]}
+
+
+@app.post("/admin/prizes")
+def admin_prize_create(request: Request, req: PrizeCreateReq):
+    require_admin(request)
+    name = (req.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name required")
+    cost = int(req.cost)
+    weight = int(req.weight)
+    sort_order = int(req.sort_order)
+    now = int(time.time())
+
+    with pool.connection() as con:
+        with con:
+            with con.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO prizes (name, cost, weight, is_active, sort_order, created_at, updated_at) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING id",
+                    (name, cost, weight, bool(req.is_active), sort_order, now, now),
+                )
+                pid = int(cur.fetchone()[0])
+    return {"ok": True, "id": pid}
+
+
+@app.put("/admin/prizes/{prize_id}")
+def admin_prize_update(request: Request, prize_id: int, req: PrizeUpdateReq):
+    require_admin(request)
+    name = (req.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name required")
+    cost = int(req.cost)
+    weight = int(req.weight)
+    sort_order = int(req.sort_order)
+    now = int(time.time())
+
+    with pool.connection() as con:
+        with con:
+            with con.cursor() as cur:
+                cur.execute("SELECT 1 FROM prizes WHERE id=%s", (int(prize_id),))
+                if not cur.fetchone():
+                    raise HTTPException(status_code=404, detail="prize not found")
+                cur.execute(
+                    "UPDATE prizes SET name=%s, cost=%s, weight=%s, is_active=%s, sort_order=%s, updated_at=%s WHERE id=%s",
+                    (name, cost, weight, bool(req.is_active), sort_order, now, int(prize_id)),
+                )
+    return {"ok": True, "id": int(prize_id)}
+
+
+@app.delete("/admin/prizes/{prize_id}")
+def admin_prize_delete(request: Request, prize_id: int):
+    require_admin(request)
+    with pool.connection() as con:
+        with con:
+            with con.cursor() as cur:
+                cur.execute("DELETE FROM prizes WHERE id=%s RETURNING id", (int(prize_id),))
+                row = cur.fetchone()
+                if not row:
+                    raise HTTPException(status_code=404, detail="prize not found")
+    return {"ok": True, "id": int(prize_id)}
 
 @app.get("/admin/stats")
 def admin_stats(request: Request):
