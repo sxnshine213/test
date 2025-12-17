@@ -3,15 +3,16 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>Admin • Roulette</title>
+  <title>Admin • archicasino</title>
   <style>
     body{margin:0;font-family:Inter,Arial,sans-serif;background:#0b1320;color:#fff}
     .wrap{max-width:1100px;margin:0 auto;padding:18px}
     .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
     .card{background:#162235;border-radius:14px;padding:14px;margin-top:12px}
-    input,button{border-radius:12px;border:1px solid #1f324a;background:#0b1320;color:#fff;padding:10px 12px}
+    input,button,select{border-radius:12px;border:1px solid #1f324a;background:#0b1320;color:#fff;padding:10px 12px}
     button{cursor:pointer;border:0;background:#5b8ecb;font-weight:900}
     button.secondary{background:#1f324a}
+    button.danger{background:#b44a4a}
     table{width:100%;border-collapse:collapse;margin-top:10px;font-size:13px}
     th,td{padding:10px;border-bottom:1px solid #1f324a;vertical-align:top}
     th{opacity:.8;text-align:left}
@@ -19,6 +20,8 @@
     .pill{display:inline-block;padding:4px 8px;border-radius:999px;background:#0b1320;border:1px solid #1f324a;font-size:12px}
     .ok{color:#7CFC90}
     .bad{color:#ff7b7b}
+    .mini{padding:8px 10px;border-radius:10px;font-size:12px}
+    .w-100{width:100%}
   </style>
 </head>
 <body>
@@ -62,24 +65,25 @@
 
   <div class="card">
     <div class="row" style="justify-content:space-between;">
+      <div style="font-weight:900;">🎁 Призы (CRUD)</div>
+      <div class="row">
+        <button class="secondary" id="loadPrizes">Обновить</button>
+        <div id="prizesStatus" class="muted"></div>
+      </div>
+    </div>
+    <div id="prizesBox"></div>
+    <div class="muted" style="margin-top:8px;">
+      Подсказка: <span class="pill">icon_url</span> может быть PNG/WebP или WebM. Для WebM рядом лучше положить WebP с тем же именем (poster).
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="justify-content:space-between;">
       <div style="font-weight:900;">💳 Topups</div>
       <button class="secondary" id="loadTopups">Обновить</button>
     </div>
     <div id="topupsBox"></div>
-  
-  <div class="card">
-    <div class="row" style="justify-content:space-between; align-items:center;">
-      <div style="font-weight:900;">🎁 Prizes</div>
-      <div class="row">
-        <button class="secondary" id="loadPrizes">Обновить</button>
-        <button id="addPrize">Добавить</button>
-      </div>
-    </div>
-    <div class="muted" style="margin-top:6px;">icon_url может быть .webp (статично) или .webm (анимация). Для списков рекомендуется иметь webp-версию с тем же именем (example.webp рядом с example.webm).</div>
-    <div id="prizesBox"></div>
-    <div id="prizesStatus" class="muted" style="margin-top:8px;"></div>
   </div>
-</div>
 </div>
 
 <script>
@@ -95,12 +99,10 @@
   const userBox = document.getElementById('userBox');
   const userTables = document.getElementById('userTables');
 
-  const topupsBox = document.getElementById('topupsBox');
-
   const prizesBox = document.getElementById('prizesBox');
   const prizesStatus = document.getElementById('prizesStatus');
-  const loadPrizesBtn = document.getElementById('loadPrizes');
-  const addPrizeBtn = document.getElementById('addPrize');
+
+  const topupsBox = document.getElementById('topupsBox');
 
   function loadCfg() {
     apiBaseEl.value = localStorage.getItem('admin_api_base') || 'https://test-u2mr.onrender.com';
@@ -131,7 +133,7 @@
     const text = await res.text();
     let data = null;
     try { data = text ? JSON.parse(text) : null; } catch (_) { data = text; }
-    if (!res.ok) throw new Error(`HTTP ${res.status}: ${typeof data === 'string' ? data : JSON.stringify(data)}`);
+    if (!res.ok) throw new Error(\`HTTP \${res.status}: \${typeof data === 'string' ? data : JSON.stringify(data)}\`);
     return data;
   }
 
@@ -139,7 +141,7 @@
     const div = document.createElement('div');
     div.className = 'pill';
     div.style.padding = '10px 12px';
-    div.innerHTML = `<div class="muted" style="font-size:12px">${title}</div><div style="font-weight:900;font-size:16px;margin-top:4px">${value}</div>`;
+    div.innerHTML = \`<div class="muted" style="font-size:12px">\${title}</div><div style="font-weight:900;font-size:16px;margin-top:4px">\${value}</div>\`;
     return div;
   }
 
@@ -156,9 +158,9 @@
       statsBox.appendChild(statCard('Topups 24h', s.topups_24h));
       statsBox.appendChild(statCard('Paid stars total', s.paid_stars_total));
       statsBox.appendChild(statCard('Paid stars 24h', s.paid_stars_24h));
-      statsStatus.innerHTML = `<span class="ok">OK</span> • ${new Date().toLocaleTimeString()}`;
+      statsStatus.innerHTML = \`<span class="ok">OK</span> • \${new Date().toLocaleTimeString()}\`;
     } catch (e) {
-      statsStatus.innerHTML = `<span class="bad">ERR</span> • ${e.message}`;
+      statsStatus.innerHTML = \`<span class="bad">ERR</span> • \${e.message}\`;
     }
   }
 
@@ -214,6 +216,7 @@
 
       userBox.innerHTML = `
         <div><span class="pill">tg_user_id</span> <b>${d.user.tg_user_id}</b></div>
+        <div style="margin-top:6px;"><span class="pill">name</span> <b>${d.user.name || ''}</b></div>
         <div style="margin-top:6px;"><span class="pill">balance</span> <b>${d.user.balance}</b></div>
         <div style="margin-top:6px;"><span class="pill">created</span> ${fmtTime(d.user.created_at)}</div>
       `;
@@ -269,6 +272,174 @@
     }
   }
 
+  function tdInput(value, widthPx=120) {
+    const inp = document.createElement('input');
+    inp.value = value ?? '';
+    inp.style.width = widthPx + 'px';
+    inp.className = 'mini';
+    return inp;
+  }
+
+  function tdCheckbox(checked) {
+    const inp = document.createElement('input');
+    inp.type = 'checkbox';
+    inp.checked = !!checked;
+    return inp;
+  }
+
+  async function loadPrizes() {
+    prizesStatus.textContent = 'загрузка...';
+    prizesBox.innerHTML = '';
+    try {
+      const d = await api('/admin/prizes');
+      const items = (d.items || []);
+
+      const t = document.createElement('table');
+      const thead = document.createElement('thead');
+      thead.innerHTML = `
+        <tr>
+          <th>ID</th>
+          <th>name</th>
+          <th>cost</th>
+          <th>weight</th>
+          <th>icon_url</th>
+          <th>active</th>
+          <th>sort</th>
+          <th>actions</th>
+        </tr>
+      `;
+      const tbody = document.createElement('tbody');
+
+      // Create row
+      const trNew = document.createElement('tr');
+      const newId = tdInput('', 70);
+      const newName = tdInput('', 220);
+      const newCost = tdInput('25', 80);
+      const newWeight = tdInput('10', 80);
+      const newIcon = tdInput('', 360);
+      const newActive = tdCheckbox(true);
+      const newSort = tdInput('0', 70);
+
+      const btnCreate = document.createElement('button');
+      btnCreate.textContent = 'Create';
+      btnCreate.className = 'mini';
+      btnCreate.onclick = async () => {
+        btnCreate.disabled = true;
+        try {
+          const payload = {
+            id: newId.value.trim() ? parseInt(newId.value.trim(),10) : null,
+            name: newName.value.trim(),
+            cost: parseInt(newCost.value.trim(),10) || 0,
+            weight: parseInt(newWeight.value.trim(),10) || 0,
+            icon_url: newIcon.value.trim() || null,
+            is_active: !!newActive.checked,
+            sort_order: parseInt(newSort.value.trim(),10) || 0
+          };
+          if (!payload.name) return alert('name обязателен');
+          await api('/admin/prizes', { method:'POST', body: JSON.stringify(payload) });
+          prizesStatus.innerHTML = `<span class="ok">OK</span> created`;
+          await loadPrizes();
+        } catch (e) {
+          prizesStatus.innerHTML = `<span class="bad">ERR</span> • ${e.message}`;
+        } finally {
+          btnCreate.disabled = false;
+        }
+      };
+
+      // manual cells
+      const td1 = document.createElement('td'); td1.appendChild(newId); trNew.appendChild(td1);
+      const td2 = document.createElement('td'); td2.appendChild(newName); trNew.appendChild(td2);
+      const td3 = document.createElement('td'); td3.appendChild(newCost); trNew.appendChild(td3);
+      const td4 = document.createElement('td'); td4.appendChild(newWeight); trNew.appendChild(td4);
+      const td5 = document.createElement('td'); td5.appendChild(newIcon); trNew.appendChild(td5);
+      const td6 = document.createElement('td'); td6.appendChild(newActive); trNew.appendChild(td6);
+      const td7 = document.createElement('td'); td7.appendChild(newSort); trNew.appendChild(td7);
+      const td8 = document.createElement('td'); td8.appendChild(btnCreate); trNew.appendChild(td8);
+
+      tbody.appendChild(trNew);
+
+      // Existing rows
+      items.forEach(p => {
+        const tr = document.createElement('tr');
+
+        const id = p.id;
+
+        const inpName = tdInput(p.name, 220);
+        const inpCost = tdInput(p.cost, 80);
+        const inpWeight = tdInput(p.weight, 80);
+        const inpIcon = tdInput(p.icon_url || '', 360);
+        const inpActive = tdCheckbox(p.is_active);
+        const inpSort = tdInput(p.sort_order, 70);
+
+        const btnSave = document.createElement('button');
+        btnSave.textContent = 'Save';
+        btnSave.className = 'mini';
+        btnSave.onclick = async () => {
+          btnSave.disabled = true;
+          try {
+            const payload = {
+              id,
+              name: inpName.value.trim(),
+              cost: parseInt(inpCost.value.trim(),10) || 0,
+              weight: parseInt(inpWeight.value.trim(),10) || 0,
+              icon_url: inpIcon.value.trim() || null,
+              is_active: !!inpActive.checked,
+              sort_order: parseInt(inpSort.value.trim(),10) || 0
+            };
+            if (!payload.name) return alert('name обязателен');
+            await api('/admin/prizes/' + encodeURIComponent(id), { method:'PUT', body: JSON.stringify(payload) });
+            prizesStatus.innerHTML = `<span class="ok">OK</span> saved #${id}`;
+          } catch (e) {
+            prizesStatus.innerHTML = `<span class="bad">ERR</span> • ${e.message}`;
+          } finally {
+            btnSave.disabled = false;
+          }
+        };
+
+        const btnDel = document.createElement('button');
+        btnDel.textContent = 'Delete';
+        btnDel.className = 'mini danger';
+        btnDel.onclick = async () => {
+          if (!confirm('Удалить приз #' + id + '?')) return;
+          btnDel.disabled = true;
+          try {
+            await api('/admin/prizes/' + encodeURIComponent(id), { method:'DELETE' });
+            prizesStatus.innerHTML = `<span class="ok">OK</span> deleted #${id}`;
+            await loadPrizes();
+          } catch (e) {
+            prizesStatus.innerHTML = `<span class="bad">ERR</span> • ${e.message}`;
+          } finally {
+            btnDel.disabled = false;
+          }
+        };
+
+        const tdId = document.createElement('td'); tdId.textContent = String(id); tr.appendChild(tdId);
+        const tdName = document.createElement('td'); tdName.appendChild(inpName); tr.appendChild(tdName);
+        const tdCost = document.createElement('td'); tdCost.appendChild(inpCost); tr.appendChild(tdCost);
+        const tdW = document.createElement('td'); tdW.appendChild(inpWeight); tr.appendChild(tdW);
+        const tdIcon = document.createElement('td'); tdIcon.appendChild(inpIcon); tr.appendChild(tdIcon);
+        const tdAct = document.createElement('td'); tdAct.appendChild(inpActive); tr.appendChild(tdAct);
+        const tdSort = document.createElement('td'); tdSort.appendChild(inpSort); tr.appendChild(tdSort);
+
+        const tdActions = document.createElement('td');
+        tdActions.appendChild(btnSave);
+        tdActions.appendChild(document.createTextNode(' '));
+        tdActions.appendChild(btnDel);
+        tr.appendChild(tdActions);
+
+        tbody.appendChild(tr);
+      });
+
+      t.appendChild(thead);
+      t.appendChild(tbody);
+      prizesBox.appendChild(t);
+
+      prizesStatus.innerHTML = `<span class="ok">OK</span> • ${items.length} items`;
+    } catch (e) {
+      prizesStatus.innerHTML = `<span class="bad">ERR</span> • ${e.message}`;
+    }
+  }
+
   async function loadTopups() {
     topupsBox.innerHTML = '<div class="muted">загрузка...</div>';
     try {
@@ -276,190 +447,15 @@
       const rows = (d.items || []).map(t => ([
         fmtTime(t.created_at),
         t.tg_user_id,
-        String(t.stars_amount),
+        `${t.stars_amount}`,
         t.status,
-        t.paid_at ? fmtTime(t.paid_at) : '',
+        t.paid_at ? fmtTime(t.paid_at) : ''
       ]));
+
       topupsBox.innerHTML = '';
-      topupsBox.appendChild(renderTable('Topups (last 80)', ['created','user','stars','status','paid_at'], rows));
+      topupsBox.appendChild(renderTable('Topups', ['created','user','stars','status','paid_at'], rows));
     } catch (e) {
       topupsBox.innerHTML = `<div class="bad">ERR: ${e.message}</div>`;
-    }
-  }
-
-
-  // ===== Prizes CRUD =====
-  function isWebm(url) { return /\.webm(\?|$)/i.test(url || ''); }
-
-  function renderPrizes(items) {
-    const table = document.createElement('table');
-    const thead = document.createElement('thead');
-    thead.innerHTML = `
-      <tr>
-        <th>ID</th>
-        <th>name</th>
-        <th>cost</th>
-        <th>weight</th>
-        <th>sort</th>
-        <th>active</th>
-        <th>icon_url</th>
-        <th></th>
-      </tr>`;
-    table.appendChild(thead);
-
-    const tbody = document.createElement('tbody');
-
-    for (const p of items) {
-      const tr = document.createElement('tr');
-
-      const idTd = document.createElement('td');
-      idTd.textContent = String(p.id);
-      tr.appendChild(idTd);
-
-      const nameTd = document.createElement('td');
-      const nameIn = document.createElement('input');
-      nameIn.value = p.name || '';
-      nameIn.style.minWidth = '180px';
-      nameTd.appendChild(nameIn);
-      tr.appendChild(nameTd);
-
-      const costTd = document.createElement('td');
-      const costIn = document.createElement('input');
-      costIn.type = 'number';
-      costIn.value = String(p.cost ?? 0);
-      costIn.style.width = '90px';
-      costTd.appendChild(costIn);
-      tr.appendChild(costTd);
-
-      const wTd = document.createElement('td');
-      const wIn = document.createElement('input');
-      wIn.type = 'number';
-      wIn.value = String(p.weight ?? 0);
-      wIn.style.width = '90px';
-      wTd.appendChild(wIn);
-      tr.appendChild(wTd);
-
-      const sTd = document.createElement('td');
-      const sIn = document.createElement('input');
-      sIn.type = 'number';
-      sIn.value = String(p.sort_order ?? 0);
-      sIn.style.width = '90px';
-      sTd.appendChild(sIn);
-      tr.appendChild(sTd);
-
-      const aTd = document.createElement('td');
-      const aIn = document.createElement('input');
-      aIn.type = 'checkbox';
-      aIn.checked = !!p.is_active;
-      aTd.appendChild(aIn);
-      tr.appendChild(aTd);
-
-      const iconTd = document.createElement('td');
-      const iconIn = document.createElement('input');
-      iconIn.value = p.icon_url || '';
-      iconIn.placeholder = 'https://.../icon.webp или .webm';
-      iconIn.style.minWidth = '360px';
-      iconTd.appendChild(iconIn);
-
-      const hint = document.createElement('div');
-      hint.className = 'muted';
-      hint.style.marginTop = '4px';
-      hint.style.fontSize = '12px';
-      hint.textContent = iconIn.value ? (isWebm(iconIn.value) ? 'webm (анимация)' : 'image') : '';
-      iconTd.appendChild(hint);
-
-      tr.appendChild(iconTd);
-
-      const actTd = document.createElement('td');
-      const saveBtn = document.createElement('button');
-      saveBtn.className = 'secondary';
-      saveBtn.textContent = 'Save';
-      saveBtn.onclick = async () => {
-        try {
-          prizesStatus.innerHTML = '<span class="muted">saving...</span>';
-          await api('/admin/prizes/' + p.id, {
-            method: 'PATCH',
-            headers: {'Content-Type':'application/json'},
-            body: JSON.stringify({
-              name: nameIn.value.trim() || null,
-              cost: parseInt(costIn.value, 10),
-              weight: parseInt(wIn.value, 10),
-              sort_order: parseInt(sIn.value, 10),
-              is_active: !!aIn.checked,
-              icon_url: iconIn.value.trim() || null,
-            })
-          });
-          prizesStatus.innerHTML = '<span class="ok">saved</span>';
-          await loadPrizesAdmin();
-        } catch (e) {
-          prizesStatus.innerHTML = `<span class="bad">ERR</span> • ${e.message}`;
-        }
-      };
-      const delBtn = document.createElement('button');
-      delBtn.className = 'secondary';
-      delBtn.textContent = 'Del';
-      delBtn.onclick = async () => {
-        if (!confirm('Удалить приз #' + p.id + '?')) return;
-        try {
-          prizesStatus.innerHTML = '<span class="muted">deleting...</span>';
-          await api('/admin/prizes/' + p.id, { method: 'DELETE' });
-          prizesStatus.innerHTML = '<span class="ok">deleted</span>';
-          await loadPrizesAdmin();
-        } catch (e) {
-          prizesStatus.innerHTML = `<span class="bad">ERR</span> • ${e.message}`;
-        }
-      };
-      actTd.appendChild(saveBtn);
-      actTd.appendChild(document.createElement('div')).style.height = '6px';
-      actTd.appendChild(delBtn);
-      tr.appendChild(actTd);
-
-      tbody.appendChild(tr);
-    }
-
-    table.appendChild(tbody);
-    return table;
-  }
-
-  async function loadPrizesAdmin() {
-    if (!prizesBox) return;
-    prizesBox.innerHTML = '<div class="muted">загрузка...</div>';
-    try {
-      const d = await api('/admin/prizes');
-      const items = Array.isArray(d.items) ? d.items : [];
-      prizesBox.innerHTML = '';
-      prizesBox.appendChild(renderPrizes(items));
-      prizesStatus.innerHTML = `<span class="ok">OK</span> • ${items.length} items`;
-    } catch (e) {
-      prizesBox.innerHTML = '';
-      prizesStatus.innerHTML = `<span class="bad">ERR</span> • ${e.message}`;
-    }
-  }
-
-  async function addPrize() {
-    const name = prompt('Название приза:');
-    if (!name) return;
-    const cost = parseInt(prompt('Стоимость (sell) в ⭐:', '25') || '25', 10);
-    const weight = parseInt(prompt('Вес (шанс):', '10') || '10', 10);
-    const icon_url = prompt('icon_url (webp/webm), можно пусто:', '') || '';
-    try {
-      prizesStatus.innerHTML = '<span class="muted">creating...</span>';
-      await api('/admin/prizes', {
-        method: 'POST',
-        headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({
-          name: name.trim(),
-          cost: Number.isFinite(cost) ? cost : 0,
-          weight: Number.isFinite(weight) ? weight : 0,
-          icon_url: icon_url.trim() || null,
-          is_active: true,
-          sort_order: 0
-        })
-      });
-      prizesStatus.innerHTML = '<span class="ok">created</span>';
-      await loadPrizesAdmin();
-    } catch (e) {
-      prizesStatus.innerHTML = `<span class="bad">ERR</span> • ${e.message}`;
     }
   }
 
@@ -468,13 +464,11 @@
   document.getElementById('loadUser').onclick = loadUser;
   document.getElementById('applyDelta').onclick = applyDelta;
   document.getElementById('loadTopups').onclick = loadTopups;
-  if (loadPrizesBtn) loadPrizesBtn.onclick = loadPrizesAdmin;
-  if (addPrizeBtn) addPrizeBtn.onclick = addPrize;
+  document.getElementById('loadPrizes').onclick = loadPrizes;
 
   loadCfg();
   loadStats();
-  loadTopups();
-  loadPrizesAdmin();
+  loadPrizes();
 </script>
 </body>
 </html>
