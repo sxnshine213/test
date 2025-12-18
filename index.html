@@ -1,1205 +1,372 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ru">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>archicasino</title>
-  <script src="https://telegram.org/js/telegram-web-app.js"></script>
-
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1"/>
+  <title>Random Gift</title>
   <style>
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      font-family: Inter, Arial, sans-serif;
-      background: linear-gradient(180deg, #0e1724, #0b1320);
-      color: #fff;
-    }
-    .app {
-      max-width: 420px;
-      min-height: 100vh;
-      margin: 0 auto;
-      padding: 12px;
-      padding-bottom: 86px;
-      display: flex;
-      flex-direction: column;
-      gap: 14px;
-    }
-    .header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      font-weight: 700;
-      font-size: 16px;
-    }
-    .tabs { display: flex; gap: 10px; }
-    .pill {
-      flex: 1;
-      background: #162235;
-      border-radius: 14px;
-      padding: 10px;
-      text-align: center;
-      font-weight: 700;
-      cursor: pointer;
-      user-select: none;
-      -webkit-user-select: none;
-    }
-    .pill.active { box-shadow: inset 0 0 0 2px rgba(74,163,255,0.55); }
-    .roulette-wrap {
-      background: radial-gradient(circle at center, #18263c, #0f1a2b);
-      border-radius: 20px;
-      padding: 16px 0 10px;
-    }
-    .roulette {
-      display: flex;
-      flex-direction: row;
-      flex-wrap: nowrap;
-      gap: 16px;
-      padding: 0 16px;
-      align-items: center;
-      overflow-x: scroll;
-      overflow-y: hidden;
-      scrollbar-width: none;
-      -webkit-overflow-scrolling: touch;
-      touch-action: none;
-      user-select: none;
-      -webkit-user-select: none;
-    }
-    .roulette::-webkit-scrollbar { display: none; }
-    .item {
-      flex: 0 0 96px;
-      width: 96px;
-      background: linear-gradient(180deg, #1b2a40, #0f1a2b);
-      border-radius: 16px;
-      padding: 12px;
-      text-align: center;
-      transition: transform 180ms ease, box-shadow 180ms ease;
-    }
-    .item.win {
-      transform: translateY(-2px) scale(1.03);
-      box-shadow: 0 0 0 2px rgba(74,163,255,0.35), 0 0 22px rgba(74,163,255,0.25);
-    }
-    .item img { width: 56px; height: 56px; }
-    .price {
-      margin-top: 6px;
-      font-size: 12px;
-      background: #1f324a;
-      display: inline-block;
-      padding: 4px 8px;
-      border-radius: 999px;
-    }
-    .pointer {
-      width: 0;
-      height: 0;
-      border-left: 8px solid transparent;
-      border-right: 8px solid transparent;
-      border-top: 10px solid #4aa3ff;
-      margin: 8px auto 0;
-    }
-    .switch {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      background: #162235;
-      border-radius: 14px;
-      padding: 10px 12px;
-      font-size: 14px;
-    }
-    .spin {
-      background: #5b8ecb;
-      border: none;
-      border-radius: 14px;
-      padding: 14px;
-      font-size: 16px;
-      font-weight: 700;
-      color: #fff;
-      width: 100%;
-    }
-    .section {
-      margin-top: 8px;
-      font-size: 14px;
-      opacity: 0.85;
-    }
-
-    /* Inventory / Top common */
-    .inv {
-      background: radial-gradient(circle at center, #18263c, #0f1a2b);
-      border-radius: 20px;
-      padding: 14px;
-    }
-    .inv-title {
-      font-weight: 800;
-      font-size: 14px;
-      margin-bottom: 10px;
-      opacity: 0.95;
-    }
-    .inv-list {
-      display: grid;
-      grid-template-columns: repeat(2, 1fr);
-      gap: 10px;
-    }
-    .inv-card {
-      background: #162235;
-      border-radius: 14px;
-      padding: 10px;
-      display: flex;
-      gap: 10px;
-      align-items: center;
-    }
-    .inv-card img { width: 34px; height: 34px; }
-    .lb-avatar{width:34px;height:34px;border-radius:50%;object-fit:cover;background: rgba(255,255,255,0.12);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:900;flex:0 0 auto;}
-    .lb-avatar--ph{color: rgba(255,255,255,0.9);}
-
-    .inv-meta { display: flex; flex-direction: column; gap: 2px; }
-    .inv-name { font-size: 12px; font-weight: 800; }
-    .inv-sub { font-size: 11px; opacity: 0.75; }
-
-    /* Bottom tabs */
-    .bottom-nav {
-      position: fixed;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      max-width: 420px;
-      margin: 0 auto;
-      display: flex;
-      justify-content: space-around;
-      border-top: 1px solid #1f324a;
-      padding: 10px 0 calc(10px + env(safe-area-inset-bottom));
-      background: #0b1320;
-      z-index: 999;
-    }
-    .nav {
-      font-size: 12px;
-      color: #7f93aa;
-      text-align: center;
-      user-select: none;
-      -webkit-user-select: none;
-      cursor: pointer;
-    }
-    .nav.active { color: #4aa3ff; }
-
-    /* Prize claim sheet */
-    #claimBackdrop {
-      display: none;
-      position: fixed;
-      inset: 0;
-      background: rgba(0,0,0,.55);
-      z-index: 2000;
-      pointer-events: auto;
-    }
-    #claimSheet {
-      display: none;
-      position: fixed;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      max-width: 420px;
-      margin: 0 auto;
-      background: #0b1320;
-      border-top: 1px solid #1f324a;
-      border-radius: 18px 18px 0 0;
-      padding: 14px 14px calc(14px + env(safe-area-inset-bottom));
-      z-index: 2001;
-      transform: translateZ(0);
-      pointer-events: auto;
-    }
-    #claimSheet * { pointer-events: auto; }
-    .claim-head { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:10px; }
-    .claim-title { font-weight: 900; font-size: 14px; }
-    .claim-close {
-      opacity:.85; font-size:14px; padding:6px 10px; border-radius:999px;
-      background:#162235; cursor:pointer; user-select:none; -webkit-user-select:none;
-    }
-    .claim-row { display:flex; gap:12px; align-items:center; }
-    .claim-row img { width:54px; height:54px; border-radius:14px; background:#162235; padding:6px; }
-    .claim-name { font-weight: 900; }
-    .claim-meta { font-size:12px; opacity:.8; }
-    .claim-actions { display:flex; gap:10px; margin-top:14px; }
-    .btn { flex:1; padding:12px; border:0; border-radius:14px; font-weight:900; color:#fff; }
-    .btn-sell { background:#5b8ecb; }
-    .btn-keep { background:#162235; }
-    .claim-hint { margin-top:10px; font-size:12px; opacity:.7; }
-
-    /* Topup sheet */
-    #topupBackdrop {
-      display:none;
-      position: fixed;
-      inset: 0;
-      background: rgba(0,0,0,.55);
-      z-index: 2100;
-      pointer-events:auto;
-    }
-    #topupSheet{
-      display:none;
-      position: fixed;
-      left:0; right:0; bottom:0;
-      max-width:420px;
-      margin:0 auto;
-      background:#0b1320;
-      border-top:1px solid #1f324a;
-      border-radius:18px 18px 0 0;
-      padding: 14px 14px calc(14px + env(safe-area-inset-bottom));
-      z-index: 2101;
-      transform: translateZ(0);
-      pointer-events:auto;
-    }
-    #topupSheet * { pointer-events:auto; }
-    .topup-title { font-weight:900; font-size:14px; }
-    .topup-grid { display:grid; grid-template-columns: repeat(3, 1fr); gap:10px; margin-top:12px; }
-    .topup-pack {
-      background:#162235;
-      border-radius:14px;
-      padding:12px 10px;
-      text-align:center;
-      cursor:pointer;
-      user-select:none;
-      -webkit-user-select:none;
-      font-weight:900;
-    }
-    .topup-pack small { display:block; font-weight:700; opacity:.75; margin-top:4px; font-size:11px; }
-    .topup-footer { margin-top:12px; display:flex; gap:10px; }
-    .topup-cancel { background:#162235; }
-    .topup-buy { background:#5b8ecb; }
-    .topup-note { margin-top:10px; font-size:12px; opacity:.7; }
-
-    /* Recent wins */
-    .recent-wins{
-      margin: 10px 0 0;
-      padding: 10px 10px;
-      border-radius: 14px;
-      background: rgba(255,255,255,0.06);
-      border: 1px solid rgba(255,255,255,0.08);
-    }
-    .recent-wins__title{
-      font-size: 12px;
-      opacity: .75;
-      margin-bottom: 8px;
-      font-weight: 800;
-    }
-    .recent-wins__list{
-      display: flex;
-      gap: 10px;
-      overflow-x: auto;
-      -webkit-overflow-scrolling: touch;
-      scrollbar-width: none;
-    }
-    .recent-wins__list::-webkit-scrollbar{ display:none; }
-    .recent-win{
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      padding: 8px 10px;
-      border-radius: 999px;
-      background: rgba(0,0,0,0.25);
-      border: 1px solid rgba(255,255,255,0.08);
-      white-space: nowrap;
-      flex: 0 0 auto;
-      user-select: none;
-      -webkit-user-select: none;
-    }
-    .recent-win__avatar{
-      width: 26px;
-      height: 26px;
-      border-radius: 50%;
-      object-fit: cover;
-      background: rgba(255,255,255,0.12);
-      display: block;
-      flex: 0 0 auto;
-    }
-    .recent-win__avatar--ph{
-      display:flex;
-      align-items:center;
-      justify-content:center;
-      font-size: 11px;
-      font-weight: 900;
-      color: rgba(255,255,255,0.9);
-    }
-    .recent-win__meta{display:flex;flex-direction:column;gap:2px;line-height:1.05;}
-    .recent-win__name{font-size: 13px; max-width: 170px; overflow: hidden; text-overflow: ellipsis;}
-    .recent-win__prize{font-size: 11px; opacity: .75; max-width: 170px; overflow: hidden; text-overflow: ellipsis; display:flex; align-items:center;}
-
-  
-    .recent-win__prize-icon{width:14px;height:14px;border-radius:3px;object-fit:cover;margin-right:6px;vertical-align:middle;}
-
-  
-    .case-hint{
-      margin-top:10px;
-      opacity:.85;
-      font-size:13px;
-    }
-    .inv-actions{
-      margin-top:8px;
-      display:flex;
-      gap:8px;
-    }
-    .btn-mini{
-      padding:8px 10px;
-      border-radius:12px;
-      border:1px solid rgba(255,255,255,.14);
-      background:rgba(255,255,255,.08);
-      color:#fff;
-      font-weight:700;
-      cursor:pointer;
-      font-size:13px;
-    }
-    .btn-mini:disabled{
-      opacity:.45;
-      cursor:not-allowed;
-    }
-</style>
+    :root { color-scheme: dark; }
+    body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; background:#0b0b0f; color:#e9e9f1; }
+    .wrap { max-width: 520px; margin: 0 auto; padding: 14px; }
+    .row { display:flex; gap:10px; align-items:center; }
+    .space { flex:1; }
+    .card { background:#141420; border:1px solid #23233a; border-radius:14px; padding:12px; box-shadow: 0 10px 24px rgba(0,0,0,.25); }
+    .muted { color:#9aa0b4; font-size: 13px; }
+    .title { font-weight: 700; font-size: 18px; }
+    .tabs { display:flex; gap:8px; margin-top: 12px; }
+    .tab { flex:1; padding:10px; border-radius: 12px; border:1px solid #2a2a43; background:#12121c; color:#d9daf0; cursor:pointer; }
+    .tab.active { background:#1c1c2c; border-color:#3a3a5f; }
+    button { padding:10px 12px; border-radius: 12px; border:1px solid #2a2a43; background:#1c1c2c; color:#fff; cursor:pointer; }
+    button.primary { background:#3a66ff; border-color:#3a66ff; }
+    button.danger { background:#b33434; border-color:#b33434; }
+    button.ghost { background:transparent; }
+    button:disabled { opacity:.55; cursor:not-allowed; }
+    .grid { display:grid; grid-template-columns: 1fr; gap:10px; }
+    .case { display:flex; gap:10px; align-items:center; }
+    .pill { font-size: 12px; border:1px solid #2a2a43; padding:4px 8px; border-radius: 999px; color:#cfd2ff; }
+    .casesGrid { display:grid; grid-template-columns: 1fr; gap:10px; margin-top: 10px; }
+    .caseBtn { width:100%; text-align:left; }
+    .prizes { display:grid; grid-template-columns: repeat(2, 1fr); gap:10px; margin-top:10px; }
+    .prize { background:#11111a; border:1px solid #24243a; border-radius:12px; padding:10px; }
+    .prize img { width: 44px; height:44px; border-radius: 10px; object-fit: cover; background:#0e0e15; border:1px solid #23233a; }
+    .prize .name { font-weight:600; margin-top:6px; }
+    .prize .meta { font-size:12px; color:#9aa0b4; }
+    .invItem { display:flex; gap:10px; align-items:flex-start; }
+    .invItem img { width: 48px; height:48px; border-radius: 10px; object-fit: cover; border:1px solid #23233a; background:#0e0e15; }
+    .invActions { display:flex; gap:8px; margin-top: 8px; }
+    .err { margin-top: 10px; padding:10px; border-radius: 12px; border:1px solid #5a2a2a; background:#1a0f10; color:#ffd0d0; display:none; white-space: pre-wrap; }
+    .ok { margin-top: 10px; padding:10px; border-radius: 12px; border:1px solid #2a5a34; background:#0f1a12; color:#d0ffe0; display:none; white-space: pre-wrap; }
+    .small { font-size: 12px; }
+    .hr { height:1px; background:#24243a; margin: 10px 0; }
+    a { color:#9fb2ff; }
+  </style>
 </head>
-
 <body>
-  <div class="app">
-    <div class="header">
-      <div>archicasino</div>
-      <div style="display:flex; gap:8px; align-items:center;">
-        <div id="balanceBadge" style="font-weight:800;font-size:13px;background:#162235;padding:6px 10px;border-radius:999px;">⭐ …</div>
-        <div id="topupBtn" style="font-weight:900;font-size:13px;background:#5b8ecb;padding:6px 10px;border-radius:999px;cursor:pointer;user-select:none;-webkit-user-select:none;">
-          ➕
+<div class="wrap">
+  <div class="card">
+    <div class="row">
+      <div>
+        <div class="title">Random Gift</div>
+        <div class="muted">Выбирай кейс, крути, продавай или выводи.</div>
+      </div>
+      <div class="space"></div>
+      <div class="pill">Баланс: <span id="balance">0</span> ⭐</div>
+    </div>
+    <div class="tabs">
+      <button class="tab active" id="tabSpin" type="button">Кейсы</button>
+      <button class="tab" id="tabInv" type="button">Инвентарь</button>
+    </div>
+  </div>
+
+  <div id="msgOk" class="ok"></div>
+  <div id="msgErr" class="err"></div>
+
+  <div id="screenSpin" class="card" style="margin-top:12px;">
+    <div class="row">
+      <div>
+        <div class="title" style="font-size:16px;">Кейсы</div>
+        <div class="muted">Выбери кейс — у каждого своя цена и призы.</div>
+      </div>
+      <div class="space"></div>
+      <button id="btnReload" type="button" class="ghost">Обновить</button>
+    </div>
+
+    <div id="casesList" class="casesGrid"></div>
+
+    <div class="hr"></div>
+
+    <div class="row">
+      <div>
+        <div class="title" style="font-size:16px;">Выбран: <span id="selectedCaseName">—</span></div>
+        <div class="muted">Цена: <span id="selectedCasePrice">—</span> ⭐</div>
+      </div>
+      <div class="space"></div>
+      <button id="btnSpin" type="button" class="primary" disabled>Крутить</button>
+    </div>
+
+    <div id="prizesHint" class="muted small" style="margin-top:10px;">Призы выбранного кейса:</div>
+    <div id="prizesGrid" class="prizes"></div>
+  </div>
+
+  <div id="screenInv" class="card" style="margin-top:12px; display:none;">
+    <div class="row">
+      <div>
+        <div class="title" style="font-size:16px;">Инвентарь</div>
+        <div class="muted">Продай за ⭐ или выведи подарок.</div>
+      </div>
+      <div class="space"></div>
+      <button id="btnInvReload" type="button" class="ghost">Обновить</button>
+    </div>
+    <div id="invEmpty" class="muted" style="margin-top:10px; display:none;">Инвентарь пуст.</div>
+    <div id="invList" class="grid" style="margin-top:10px;"></div>
+  </div>
+
+</div>
+
+<script>
+  const API_BASE = (window.API_BASE || "https://test-u2mr.onrender.com").replace(/\/+$/,'');
+  const tg = window.Telegram?.WebApp;
+
+  function showErr(text) {
+    const el = document.getElementById('msgErr');
+    el.textContent = String(text || 'Ошибка');
+    el.style.display = 'block';
+    document.getElementById('msgOk').style.display = 'none';
+  }
+  function showOk(text) {
+    const el = document.getElementById('msgOk');
+    el.textContent = String(text || 'OK');
+    el.style.display = 'block';
+    document.getElementById('msgErr').style.display = 'none';
+  }
+  function clearMsg() {
+    document.getElementById('msgOk').style.display = 'none';
+    document.getElementById('msgErr').style.display = 'none';
+  }
+
+  function initData() {
+    return tg?.initData || "";
+  }
+
+  async function postJSON(path, body) {
+    const url = API_BASE + path;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body || {}),
+    });
+    const text = await res.text();
+    let data;
+    try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
+    if (!res.ok) {
+      const msg = (data && (data.detail || data.error || data.message)) ? (data.detail || data.error || data.message) : (res.status + " " + res.statusText);
+      throw new Error(msg);
+    }
+    return data;
+  }
+
+  let me = null;
+  let cases = [];
+  let selectedCaseId = null;
+  let selectedCase = null;
+
+  function setActiveTab(which) {
+    const spin = document.getElementById('screenSpin');
+    const inv = document.getElementById('screenInv');
+    const tSpin = document.getElementById('tabSpin');
+    const tInv = document.getElementById('tabInv');
+    if (which === 'inv') {
+      spin.style.display = 'none';
+      inv.style.display = 'block';
+      tSpin.classList.remove('active');
+      tInv.classList.add('active');
+    } else {
+      spin.style.display = 'block';
+      inv.style.display = 'none';
+      tInv.classList.remove('active');
+      tSpin.classList.add('active');
+    }
+  }
+
+  function renderCases() {
+    const box = document.getElementById('casesList');
+    if (!cases.length) {
+      box.innerHTML = '<div class="muted">Кейсы не найдены. Создай их в админке.</div>';
+      return;
+    }
+    box.innerHTML = cases.map(c => {
+      const active = (String(c.id) === String(selectedCaseId));
+      const title = escapeHtml(c.name || ('Case #' + c.id));
+      const desc = escapeHtml(c.description || '');
+      return `
+        <button type="button" class="card caseBtn ${active ? '' : ''}" data-action="select-case" data-case-id="${c.id}">
+          <div class="case">
+            <div class="space">
+              <div style="font-weight:700;">${title}</div>
+              ${desc ? `<div class="muted small">${desc}</div>` : ''}
+              <div class="muted small" style="margin-top:6px;">Цена: <b>${Number(c.price)||0} ⭐</b></div>
+            </div>
+            <div class="pill">${active ? 'Выбран' : 'Выбрать'}</div>
+          </div>
+        </button>
+      `;
+    }).join('');
+  }
+
+  function renderSelectedCase() {
+    const nameEl = document.getElementById('selectedCaseName');
+    const priceEl = document.getElementById('selectedCasePrice');
+    const btnSpin = document.getElementById('btnSpin');
+    if (!selectedCase) {
+      nameEl.textContent = '—';
+      priceEl.textContent = '—';
+      btnSpin.disabled = true;
+      document.getElementById('prizesGrid').innerHTML = '';
+      return;
+    }
+    nameEl.textContent = selectedCase.name || ('Case #' + selectedCase.id);
+    priceEl.textContent = Number(selectedCase.price)||0;
+    btnSpin.disabled = false;
+  }
+
+  function escapeHtml(s) {
+    return String(s ?? '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+  }
+
+  function renderPrizes(items) {
+    const grid = document.getElementById('prizesGrid');
+    if (!items || !items.length) {
+      grid.innerHTML = '<div class="muted">Нет призов для этого кейса.</div>';
+      return;
+    }
+    grid.innerHTML = items.map(p => {
+      const img = p.icon_url ? `<img src="${escapeHtml(p.icon_url)}" alt="">` : `<img src="" alt="">`;
+      return `
+        <div class="prize">
+          ${img}
+          <div class="name">${escapeHtml(p.name)}</div>
+          <div class="meta">${Number(p.cost)||0} ⭐</div>
         </div>
-      </div>
-    </div>
+      `;
+    }).join('');
+  }
 
-    <div id="screenRoulette">
-<div id="recentWins" class="recent-wins" style="display:none;">
-        <div class="recent-wins__title">Недавние выигрыши</div>
-        <div id="recentWinsList" class="recent-wins__list"></div>
-      </div>
+  async function loadMe() {
+    const data = await postJSON('/me', { initData: initData() });
+    me = data;
+    document.getElementById('balance').textContent = Number(data.balance)||0;
+  }
 
-
-      <div class="tabs" id="casesTabs"></div>
-      <div class="case-hint" id="caseHint"></div>
-
-      <div class="roulette-wrap">
-        <div class="roulette" id="roulette" data-initialized="false">
-          <div class="item" data-id="1"><img src="https://emojiapi.dev/api/v1/heart_with_ribbon/128.png"><div class="price">⭐ 15</div></div>
-          <div class="item" data-id="2"><img src="https://emojiapi.dev/api/v1/teddy_bear/128.png"><div class="price">⭐ 25</div></div>
-          <div class="item" data-id="4"><img src="https://emojiapi.dev/api/v1/gem_stone/128.png"><div class="price">⭐ 100</div></div>
-          <div class="item" data-id="3"><img src="https://emojiapi.dev/api/v1/birthday_cake/128.png"><div class="price">⭐ 50</div></div>
-          <div class="item" data-id="5"><img src="https://emojiapi.dev/api/v1/rose/128.png"><div class="price">⭐ 25</div></div>
-        </div>
-        <div class="pointer"></div>
-      </div>
-
-      <div class="switch">Демо режим <input type="checkbox"></div>
-      <button class="spin" id="spinBtn">Мне повезёт! 🎰</button>
-    </div>
-
-    <div id="screenInventory" style="display:none;">
-      <div class="inv">
-        <div class="inv-title">🎒 Инвентарь</div>
-        <div id="inventoryEmpty" class="section" style="margin:0;">Пока пусто — крути рулетку 😊</div>
-        <div id="inventoryList" class="inv-list" style="display:none;"></div>
-      </div>
-    </div>
-
-    <div id="screenTop" style="display:none;">
-      <div class="inv">
-        <div class="inv-title">🏆 Лидерборд</div>
-        <div id="topMe" class="section" style="margin:0 0 10px 0;">—</div>
-        <div id="topList" class="inv-list" style="grid-template-columns: 1fr;"></div>
-      </div>
-    </div>
-  </div>
-
-  <div class="bottom-nav">
-    <div class="nav active" id="tabSpin">🎰 Рулетка</div>
-    <div class="nav" id="tabInv">🎒 Инвентарь</div>
-    <div class="nav" id="tabTop">🏆 Топ</div>
-  </div>
-
-  <!-- Claim UI -->
-  <div id="claimBackdrop"></div>
-  <div id="claimSheet">
-    <div class="claim-head">
-      <div class="claim-title">🎉 Ваш приз</div>
-      <div class="claim-close" id="claimClose">✕</div>
-    </div>
-
-    <div class="claim-row">
-      <img id="claimImg" src="" alt="prize">
-      <div style="display:flex; flex-direction:column; gap:4px;">
-        <div id="claimName" class="claim-name">—</div>
-        <div id="claimMeta" class="claim-meta">—</div>
-      </div>
-    </div>
-
-    <div class="claim-actions">
-      <button class="btn btn-sell" id="btnSell">Продать</button>
-      <button class="btn btn-keep" id="btnKeep">Забрать</button>
-    </div>
-
-    <div class="claim-hint">Выберите действие: продать за ⭐ или добавить в инвентарь.</div>
-  </div>
-
-  <!-- Topup UI -->
-  <div id="topupBackdrop"></div>
-  <div id="topupSheet">
-    <div class="claim-head" style="margin-bottom:6px;">
-      <div class="topup-title">⭐ Пополнение</div>
-      <div class="claim-close" id="topupClose">✕</div>
-    </div>
-
-    <div class="topup-grid">
-      <div class="topup-pack" data-stars="50">50 ⭐<small>быстро</small></div>
-      <div class="topup-pack" data-stars="100">100 ⭐<small>оптимально</small></div>
-      <div class="topup-pack" data-stars="250">250 ⭐<small>выгодно</small></div>
-    </div>
-
-    <div class="topup-footer">
-      <button class="btn topup-cancel" id="topupCancel">Отмена</button>
-      <button class="btn topup-buy" id="topupBuy" disabled>Пополнить</button>
-    </div>
-
-    <div class="topup-note">Оплата откроется в Telegram. Баланс обновится после успешного платежа.</div>
-  </div>
-
-  <script>
-    const API_BASE = "https://test-u2mr.onrender.com"; // <-- поменяй на свой бекенд при необходимости
-
-    const tg = window.Telegram?.WebApp;
-    try { tg?.ready(); } catch (_) {}
-
-    const btn = document.getElementById('spinBtn');
-    const roulette = document.getElementById('roulette');
-    const balanceBadge = document.getElementById('balanceBadge');
-
-    const topupBtn = document.getElementById('topupBtn');
-    const topupBackdrop = document.getElementById('topupBackdrop');
-    const topupSheet = document.getElementById('topupSheet');
-    const topupClose = document.getElementById('topupClose');
-    const topupCancel = document.getElementById('topupCancel');
-    const topupBuy = document.getElementById('topupBuy');
-    const topupPacks = Array.from(document.querySelectorAll('.topup-pack[data-stars]'));
-    let selectedTopupStars = null;
-    let topupInFlight = false;
-
-    const screenRoulette = document.getElementById('screenRoulette');
-    const screenInventory = document.getElementById('screenInventory');
-    const screenTop = document.getElementById('screenTop');
-
-    const tabSpin = document.getElementById('tabSpin');
-    const tabInv = document.getElementById('tabInv');
-    const tabTop = document.getElementById('tabTop');
-
-    const inventoryList = document.getElementById('inventoryList');
-    const inventoryEmpty = document.getElementById('inventoryEmpty');
-
-    const topList = document.getElementById('topList');
-    const topMe = document.getElementById('topMe');
-
-    const claimBackdrop = document.getElementById('claimBackdrop');
-    const claimSheet = document.getElementById('claimSheet');
-    const claimClose = document.getElementById('claimClose');
-    const claimImg = document.getElementById('claimImg');
-    const claimName = document.getElementById('claimName');
-    const claimMeta = document.getElementById('claimMeta');
-    const btnSell = document.getElementById('btnSell');
-    const btnKeep = document.getElementById('btnKeep');
-
-    const casesTabs = document.getElementById('casesTabs');
-    const caseHint = document.getElementById('caseHint');
-    let selectedCaseId = null;
-    let selectedCase = null;
-
-    function renderCases(items){
-      if (!casesTabs) return;
-      casesTabs.innerHTML = '';
-      (items || []).forEach((c, idx) => {
-        const el = document.createElement('div');
-        el.className = 'pill' + ((selectedCaseId && c.id === selectedCaseId) || (!selectedCaseId && idx === 0) ? ' active' : '');
-        el.dataset.caseId = String(c.id);
-        el.textContent = `${c.name} • ${c.price} ⭐`;
-        el.addEventListener('click', async () => {
-          Array.from(casesTabs.querySelectorAll('.pill')).forEach(x => x.classList.remove('active'));
-          el.classList.add('active');
-          selectedCaseId = c.id;
-          selectedCase = c;
-          try { tg?.HapticFeedback?.selectionChanged(); } catch (_) {}
-          await refreshCasePrizes();
-        });
-        casesTabs.appendChild(el);
-      });
+  async function loadCases() {
+    const data = await postJSON('/cases', { initData: initData() });
+    cases = data.items || [];
+    if (!selectedCaseId && cases.length) {
+      selectedCaseId = cases[0].id;
+      selectedCase = cases[0];
+    } else {
+      selectedCase = cases.find(c => String(c.id) === String(selectedCaseId)) || null;
     }
+    renderCases();
+    renderSelectedCase();
+    await loadCasePrizes();
+  }
 
-    async function refreshCases(){
-      try{
-        const res = await apiPost('/cases', { initData: tg?.initData || '' });
-        const items = Array.isArray(res?.items) ? res.items : [];
-        if (items.length){
-          if (!selectedCaseId) {
-            selectedCaseId = items[0].id;
-            selectedCase = items[0];
-          } else {
-            selectedCase = items.find(x => x.id === selectedCaseId) || items[0];
-            selectedCaseId = selectedCase.id;
-          }
-        }
-        renderCases(items);
-        await refreshCasePrizes();
-      }catch(e){
-        console.warn('refreshCases failed', e);
-      }
+  async function loadCasePrizes() {
+    if (!selectedCaseId) {
+      renderPrizes([]);
+      return;
     }
+    const data = await postJSON('/case_prizes', { initData: initData(), case_id: selectedCaseId });
+    renderPrizes(data.items || []);
+  }
 
-    async function refreshCasePrizes(){
-      if (!selectedCaseId) return;
-      try{
-        const res = await apiPost(`/cases/${selectedCaseId}/prizes`, { initData: tg?.initData || '' });
-        const items = Array.isArray(res?.items) ? res.items : [];
-        setPrizes(items);
-        rebuildRouletteFromPrizes(items);
-        const caseInfo = res?.case || selectedCase;
-        if (caseHint){
-          const desc = (caseInfo && caseInfo.description) ? String(caseInfo.description) : '';
-          caseHint.textContent = desc ? desc : `Выбран кейс: ${(caseInfo?.name || '')} • ${caseInfo?.price ?? ''} ⭐`;
-        }
-        // update button label
-        if (btn && caseInfo && typeof caseInfo.price === 'number'){
-          btn.textContent = `Крутить • ${caseInfo.price} ⭐`;
-        }
-      }catch(e){
-        console.warn('refreshCasePrizes failed', e);
-      }
+  async function spin() {
+    clearMsg();
+    if (!selectedCaseId) return;
+    const data = await postJSON('/spin', { initData: initData(), case_id: selectedCaseId });
+    document.getElementById('balance').textContent = Number(data.balance)||0;
+    showOk(`Выпало: ${data.prize?.name || 'приз'} (${data.prize?.cost || 0} ⭐). Добавлено в инвентарь.`);
+  }
+
+  async function loadInventory() {
+    const data = await postJSON('/inventory', { initData: initData() });
+    const items = data.items || [];
+    const empty = document.getElementById('invEmpty');
+    const list = document.getElementById('invList');
+    if (!items.length) {
+      empty.style.display = 'block';
+      list.innerHTML = '';
+      return;
     }
-p.classList.add('active');
-      selectedCost = parseInt(p.dataset.cost, 10) || 25;
-      try { tg?.HapticFeedback?.selectionChanged(); } catch (_) {}
-    }));
-
-    async function apiPost(path, payload) {
-      const res = await fetch(`${API_BASE}${path}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      if (!res.ok) {
-        const text = await res.text();
-        throw new Error(`HTTP ${res.status}: ${text}`);
-      }
-      const data = await res.json();
-      return data;
-    }
-
-
-    // ===== Prizes (icons from backend) =====
-    let PRIZES_BY_ID = {};
-
-    function setPrizes(items) {
-      PRIZES_BY_ID = {};
-      const list = Array.isArray(items) ? items : [];
-      for (const p of list) {
-        if (!p || !p.id) continue;
-        PRIZES_BY_ID[Number(p.id)] = p;
-      }
-    }
-
-    function rebuildRouletteFromPrizes(items) {
-      if (!r) return;
-      const list = Array.isArray(items) ? items : [];
-      if (!list.length) return;
-
-      // Reset infinite-scroll clone state
-      r.dataset.initialized = 'false';
-      r.innerHTML = '';
-
-      for (const p of list) {
-        const item = document.createElement('div');
-        item.className = 'item';
-        item.dataset.id = String(p.id);
-
-        const img = document.createElement('img');
-        img.src = (p.icon_url || '').trim() || giftImageById(p.id);
-        img.alt = 'prize';
-        img.referrerPolicy = 'no-referrer';
-
-        const price = document.createElement('div');
-        price.className = 'price';
-        price.textContent = `⭐ ${p.cost ?? ''}`;
-
-        item.appendChild(img);
-        item.appendChild(price);
-        r.appendChild(item);
-      }
-    }
-
-    async function refreshPrizes() {
-      // kept for backward compatibility
-      return await refreshCases();
-    }
-
-    async function refreshBalance() {
-      try {
-        const me = await apiPost('/me', { initData: tg?.initData || '' });
-        if (balanceBadge) balanceBadge.textContent = `⭐ ${me.balance}`;
-      } catch (_) {
-        if (balanceBadge) balanceBadge.textContent = '⭐ —';
-      }
-    }
-
-    // ===== Recent wins =====
-    const recentWinsWrap = document.getElementById('recentWins');
-    const recentWinsList = document.getElementById('recentWinsList');
-
-    function initialsFromName(name) {
-      const s = (name || '').trim().replace(/^@/, '');
-      if (!s) return 'U';
-      const parts = s.split(/\s+/).filter(Boolean);
-      const a = (parts[0] || '')[0] || 'U';
-      const b = (parts[1] || '')[0] || '';
-      return (a + b).toUpperCase();
-    }
-
-    function renderRecentWins(items) {
-      if (!recentWinsWrap || !recentWinsList) return;
-
-      const list = Array.isArray(items) ? items : [];
-      if (!list.length) {
-        recentWinsWrap.style.display = 'none';
-        recentWinsList.innerHTML = '';
-        return;
-      }
-
-      recentWinsWrap.style.display = '';
-      recentWinsList.innerHTML = '';
-
-      for (const it of list) {
-        const el = document.createElement('div');
-        el.className = 'recent-win';
-
-        let avatarNode;
-        if (it && it.avatar) {
-          const img = document.createElement('img');
-          img.className = 'recent-win__avatar';
-          img.src = it.avatar;
-          img.alt = it.name || 'user';
-          img.referrerPolicy = 'no-referrer';
-          avatarNode = img;
-        } else {
-          const ph = document.createElement('div');
-          ph.className = 'recent-win__avatar recent-win__avatar--ph';
-          ph.textContent = initialsFromName(it?.name);
-          avatarNode = ph;
-        }
-
-        const meta = document.createElement('div');
-        meta.className = 'recent-win__meta';
-
-        const name = document.createElement('div');
-        name.className = 'recent-win__name';
-        name.textContent = it?.name || 'User';
-
-        const prizeText = (it?.prize || it?.prize_name || '').trim();
-        const prizeRow = document.createElement('div');
-        prizeRow.className = 'recent-win__prize';
-        if (it?.icon_url) {
-          const pi = document.createElement('img');
-          pi.className = 'recent-win__prize-icon';
-          pi.src = String(it.icon_url).trim();
-          pi.alt = 'icon';
-          pi.referrerPolicy = 'no-referrer';
-          prizeRow.appendChild(pi);
-        }
-        const pt = document.createElement('span');
-        pt.textContent = prizeText;
-        prizeRow.appendChild(pt);
-
-        meta.appendChild(name);
-        if (prizeText) meta.appendChild(prizeRow);
-
-        el.appendChild(avatarNode);
-        el.appendChild(meta);
-        recentWinsList.appendChild(el);
-      }
-    }
-
-    async function refreshRecentWins() {
-      try {
-        const res = await apiPost('/recent_wins', { initData: tg?.initData || '' });
-        renderRecentWins(res?.items || []);
-      } catch (_) {
-        // silently ignore
-      }
-    }
-
-    function giftImageById(id) {
-      const p = PRIZES_BY_ID && PRIZES_BY_ID[Number(id)];
-      const url = (p && p.icon_url) ? String(p.icon_url).trim() : '';
-      if (url) return url;
-
-      const map = {
-        1: 'https://emojiapi.dev/api/v1/heart_with_ribbon/128.png',
-        2: 'https://emojiapi.dev/api/v1/teddy_bear/128.png',
-        3: 'https://emojiapi.dev/api/v1/birthday_cake/128.png',
-        4: 'https://emojiapi.dev/api/v1/gem_stone/128.png',
-        5: 'https://emojiapi.dev/api/v1/rose/128.png'
-      };
-      return map[id] || map[1];
-    }
-
-    async function refreshInventory() {
-      if (!inventoryList || !inventoryEmpty) return;
-      try {
-        const inv = await apiPost('/inventory', { initData: tg?.initData || '' });
-        const items = Array.isArray(inv.items) ? inv.items : [];
-
-        if (!items.length) {
-          inventoryEmpty.style.display = '';
-          inventoryList.style.display = 'none';
-          inventoryList.innerHTML = '';
-          return;
-        }
-
-        inventoryEmpty.style.display = 'none';
-        inventoryList.style.display = '';
-        inventoryList.innerHTML = items.map(it => {
-          const img = (it && it.icon_url) ? String(it.icon_url).trim() : giftImageById(it.prize_id || it.id);
-          const name = it.prize_name || it.name || 'Подарок';
-          const cost = it.prize_cost ?? it.cost ?? '';
-          const when = it.created_at ? new Date(it.created_at * 1000).toLocaleString() : '';
-          return `
-            <div class="inv-card">
-              <img src="${img}" alt="gift" />
-              <div class="inv-meta">
-                <div class="inv-name">${name}</div>
-                <div class="inv-sub">⭐ ${cost} ${when ? '• ' + when : ''}</div>
-                <div class="inv-actions">
-                  <button class="btn-mini" data-act="sell" data-invid="${it.inventory_id || ''}" ${it.is_locked ? 'disabled' : ''}>Продать</button>
-                  <button class="btn-mini" data-act="withdraw" data-invid="${it.inventory_id || ''}" ${it.is_locked ? 'disabled' : ''}>Вывести</button>
-                </div>
-                ${it.is_locked ? `<div class="inv-sub" style="opacity:.7;margin-top:6px;">Заблокировано: ${it.locked_reason || '—'}</div>` : ``}
+    empty.style.display = 'none';
+    list.innerHTML = items.map(it => {
+      const img = it.icon_url ? `<img src="${escapeHtml(it.icon_url)}" alt="">` : `<img src="" alt="">`;
+      const locked = !!it.is_locked;
+      const lockNote = locked ? `<div class="muted small">Статус: в обработке</div>` : '';
+      return `
+        <div class="card">
+          <div class="invItem">
+            ${img}
+            <div class="space">
+              <div style="font-weight:700;">${escapeHtml(it.name || it.prize_name)}</div>
+              <div class="muted small">${Number(it.cost ?? it.prize_cost) || 0} ⭐</div>
+              ${lockNote}
+              <div class="invActions">
+                <button type="button" data-action="sell" data-inventory-id="${it.inventory_id || it.id}" ${locked ? 'disabled' : ''}>Продать</button>
+                <button type="button" class="primary" data-action="withdraw" data-inventory-id="${it.inventory_id || it.id}" ${locked ? 'disabled' : ''}>Вывести</button>
               </div>
             </div>
-          `;
-        }).join('');
-      } catch (_) {
-        inventoryEmpty.style.display = '';
-        inventoryList.style.display = 'none';
-        inventoryList.innerHTML = '';
-      }
-    }
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
 
-    
-    if (inventoryList && !inventoryList.dataset.bound) {
-      inventoryList.dataset.bound = '1';
-      inventoryList.addEventListener('click', async (e) => {
-        const t = e.target;
-        const act = t?.dataset?.act;
-        const id = parseInt(t?.dataset?.invid || '', 10);
-        if (!act || !id) return;
-        t.disabled = true;
-        try{
-          if (act === 'sell'){
-            const res = await apiPost('/inventory/sell', { initData: tg?.initData || '', inventory_id: id });
-            if (balanceBadge && res && typeof res.balance === 'number') balanceBadge.textContent = `⭐ ${res.balance}`;
-            await refreshInventory();
-          } else if (act === 'withdraw'){
-            const res = await apiPost('/inventory/withdraw', { initData: tg?.initData || '', inventory_id: id });
-            await refreshInventory();
-            if (res?.status === 'sent') {
-              alert('Подарок отправлен.');
-            } else if (res?.status === 'claim_created') {
-              alert('Заявка на уникальный подарок создана. Администратор обработает её.');
-            } else if (res?.status === 'locked') {
-              alert('Этот подарок уже в обработке.');
-            }
-          }
-        }catch(err){
-          alert(String(err?.message || err));
-        }finally{
-          t.disabled = false;
-        }
-      });
-    }
+  async function sellItem(inventoryId) {
+    clearMsg();
+    const data = await postJSON('/inventory/sell', { initData: initData(), inventory_id: inventoryId });
+    document.getElementById('balance').textContent = Number(data.balance)||0;
+    showOk('Продано. Баланс обновлён.');
+    await loadInventory();
+  }
 
-async function refreshLeaderboard() {
-      if (!topList || !topMe) return;
+  async function withdrawItem(inventoryId) {
+    clearMsg();
+    const data = await postJSON('/inventory/withdraw', { initData: initData(), inventory_id: inventoryId });
+    // server returns status/message and maybe balance
+    if (data.balance !== undefined) document.getElementById('balance').textContent = Number(data.balance)||0;
+    showOk(data.message || 'Запрос обработан.');
+    await loadInventory();
+  }
 
-      topMe.textContent = 'Загрузка...';
-      topList.innerHTML = '';
+  function wireUI() {
+    document.getElementById('tabSpin').addEventListener('click', () => setActiveTab('spin'));
+    document.getElementById('tabInv').addEventListener('click', async () => { setActiveTab('inv'); await loadInventory(); });
+    document.getElementById('btnReload').addEventListener('click', async () => { clearMsg(); await loadCases(); });
+    document.getElementById('btnInvReload').addEventListener('click', async () => { clearMsg(); await loadInventory(); });
+    document.getElementById('btnSpin').addEventListener('click', async () => { try { await spin(); } catch(e){ showErr(e.message); } });
 
-      try {
-        const res = await apiPost('/leaderboard', { initData: tg?.initData || '', limit: 30 });
-        const items = Array.isArray(res.items) ? res.items : [];
-        const me = res.me || {};
-
-        topMe.textContent = `Ваше место: #${me.rank ?? '—'} • Баланс: ⭐ ${me.balance ?? '—'}`;
-
-        topList.innerHTML = items.map(it => {
-          const badge = it.is_me ? ' style="box-shadow: inset 0 0 0 2px rgba(74,163,255,0.55)"' : '';
-          const av = it.avatar
-            ? `<img class="lb-avatar" src="${it.avatar}" alt="avatar" referrerpolicy="no-referrer" />`
-            : `<div class="lb-avatar lb-avatar--ph">${initialsFromName(it.name)}</div>`;
-          return `
-            <div class="inv-card"${badge}>
-              ${av}
-              <div class="inv-meta" style="width:100%;">
-                <div class="inv-name">#${it.rank} • ${it.name}</div>
-                <div class="inv-sub">⭐ ${it.balance}</div>
-              </div>
-            </div>
-          `;
-        }).join('');
-      } catch (_) {
-        topMe.textContent = 'Ошибка загрузки лидерборда';
-        topList.innerHTML = '';
-      }
-    }
-
-    function setTab(which) {
-      const isInv = which === 'inv';
-      const isTop = which === 'top';
-
-      if (screenRoulette) screenRoulette.style.display = (isInv || isTop) ? 'none' : '';
-      if (screenInventory) screenInventory.style.display = isInv ? '' : 'none';
-      if (screenTop) screenTop.style.display = isTop ? '' : 'none';
-
-      tabSpin?.classList.toggle('active', !isInv && !isTop);
-      tabInv?.classList.toggle('active', isInv);
-      tabTop?.classList.toggle('active', isTop);
-
-      if (isInv) refreshInventory();
-      if (isTop) refreshLeaderboard();
-    }
-
-    tabSpin?.addEventListener('click', () => setTab('spin'));
-    tabInv?.addEventListener('click', () => setTab('inv'));
-    tabTop?.addEventListener('click', () => setTab('top'));
-
-    // ===== Topup =====
-    function openTopup() {
-      selectedTopupStars = null;
-      topupPacks.forEach(p => p.style.boxShadow = '');
-      if (topupBuy) topupBuy.disabled = true;
-
-      topupBackdrop.style.display = 'block';
-      topupSheet.style.display = 'block';
-      try { tg?.HapticFeedback?.selectionChanged(); } catch (_) {}
-    }
-
-    function closeTopup() {
-      if (topupInFlight) return;
-      topupBackdrop.style.display = 'none';
-      topupSheet.style.display = 'none';
-    }
-
-    function openInvoiceSmart(link) {
-      try {
-        if (tg?.openInvoice) {
-          tg.openInvoice(link, (status) => {
-            if (status === 'paid' || status === 'pending') {
-              setTimeout(refreshBalance, 800);
-              setTimeout(refreshBalance, 2000);
-              setTimeout(refreshBalance, 5000);
-            }
-          });
-          return;
-        }
-      } catch (_) {}
-
-      try {
-        if (tg?.openTelegramLink && /^https?:\/\/t\.me\//i.test(link)) {
-          tg.openTelegramLink(link);
-          return;
-        }
-        if (tg?.openLink) {
-          tg.openLink(link);
-          return;
-        }
-      } catch (_) {}
-
-      window.open(link, "_blank");
-    }
-
-    async function doTopup(stars) {
-      if (topupInFlight) return;
-      topupInFlight = true;
-      if (topupBuy) topupBuy.disabled = true;
-
-      try {
-        const res = await apiPost('/topup/create', { initData: tg?.initData || '', stars });
-        const link = res?.invoice_link;
-        if (!link) throw new Error('Сервер не вернул invoice_link. Проверь BOT_TOKEN на бэкенде.');
-
-        openInvoiceSmart(link);
-        closeTopup();
-      } catch (e) {
-        alert('Ошибка пополнения: ' + (e?.message || e));
-      } finally {
-        topupInFlight = false;
-        if (topupBuy) topupBuy.disabled = !(selectedTopupStars > 0);
-      }
-    }
-
-    topupBtn?.addEventListener('click', openTopup);
-    topupBtn?.addEventListener('touchend', (e) => { e.preventDefault(); openTopup(); }, { passive: false });
-
-    topupClose?.addEventListener('click', closeTopup);
-    topupClose?.addEventListener('touchend', (e) => { e.preventDefault(); closeTopup(); }, { passive: false });
-
-    topupCancel?.addEventListener('click', closeTopup);
-    topupCancel?.addEventListener('touchend', (e) => { e.preventDefault(); closeTopup(); }, { passive: false });
-
-    topupBackdrop.onclick = (e) => { try { e.preventDefault(); } catch (_) {} closeTopup(); };
-
-    topupPacks.forEach(p => {
-      const pick = () => {
-        if (topupInFlight) return;
-        topupPacks.forEach(x => x.style.boxShadow = '');
-        p.style.boxShadow = 'inset 0 0 0 2px rgba(74,163,255,0.55)';
-        selectedTopupStars = parseInt(p.dataset.stars, 10) || null;
-        if (topupBuy) topupBuy.disabled = !(selectedTopupStars > 0);
-        try { tg?.HapticFeedback?.selectionChanged(); } catch (_) {}
-      };
-      p.addEventListener('click', pick);
-      p.addEventListener('touchend', (e) => { e.preventDefault(); pick(); }, { passive: false });
+    document.getElementById('casesList').addEventListener('click', async (ev) => {
+      const btn = ev.target.closest('[data-action="select-case"]');
+      if (!btn) return;
+      selectedCaseId = btn.getAttribute('data-case-id');
+      selectedCase = cases.find(c => String(c.id) === String(selectedCaseId)) || null;
+      renderCases();
+      renderSelectedCase();
+      try { await loadCasePrizes(); } catch(e){ showErr(e.message); }
     });
 
-    topupBuy?.addEventListener('click', () => selectedTopupStars && doTopup(selectedTopupStars));
-    topupBuy?.addEventListener('touchend', (e) => { e.preventDefault(); selectedTopupStars && doTopup(selectedTopupStars); }, { passive: false });
-
-    // ===== Claim (prize) =====
-    function openClaim(prize) {
-      pendingPrize = prize;
-      pendingSpinId = prize.spin_id || prize.spinId || prize.spinID || null;
-
-      if (!pendingSpinId) {
-        alert('Ошибка: /spin не вернул spin_id. Обнови бэкенд /spin.');
-        btn.disabled = false;
-        pendingPrize = null;
-        refreshRecentWins();
-        return;
-      }
-
-      claimImg.src = (prize && prize.icon_url) ? String(prize.icon_url).trim() : giftImageById(prize.id);
-      claimName.textContent = prize.name || 'Подарок';
-      claimMeta.textContent = `Продать за ⭐ ${prize.cost} или забрать в инвентарь`;
-
-      claimBackdrop.style.display = 'block';
-      claimSheet.style.display = 'block';
-
-      claimBackdrop.onclick = (e) => { try { e.preventDefault(); } catch (_) {} };
-      try { tg?.HapticFeedback?.notificationOccurred('success'); } catch (_) {}
-    }
-
-    function closeClaimIfAllowed() {
-      claimBackdrop.style.display = 'none';
-      claimSheet.style.display = 'none';
-      setTimeout(() => {
-        if (pendingSpinId) {
-          claimBackdrop.style.display = 'block';
-          claimSheet.style.display = 'block';
-        }
-      }, 50);
-    }
-
-    claimClose.addEventListener('click', closeClaimIfAllowed);
-    claimClose.addEventListener('touchend', (e) => { e.preventDefault(); closeClaimIfAllowed(); }, { passive: false });
-
-    async function doClaim(action) {
-      btnSell.disabled = true;
-      btnKeep.disabled = true;
-
+    document.getElementById('invList').addEventListener('click', async (ev) => {
+      const b = ev.target.closest('button[data-action]');
+      if (!b) return;
+      const action = b.getAttribute('data-action');
+      const id = b.getAttribute('data-inventory-id');
+      if (!id) return;
+      b.disabled = true;
       try {
-        const res = await apiPost('/claim', {
-          initData: tg?.initData || '',
-          spin_id: pendingSpinId,
-          action
-        });
-
-        if (balanceBadge && res && typeof res.balance === 'number') {
-          balanceBadge.textContent = `⭐ ${res.balance}`;
-        } else {
-          refreshBalance();
-        }
-
-        if (action === 'keep') {
-          await refreshInventory();
-        }
-
-        claimBackdrop.style.display = 'none';
-        claimSheet.style.display = 'none';
-
-        pendingSpinId = null;
-        pendingPrize = null;
-        refreshRecentWins();
-        btn.disabled = false;
-
+        if (action === 'sell') await sellItem(id);
+        else if (action === 'withdraw') await withdrawItem(id);
       } catch (e) {
-        alert('Ошибка: ' + (e?.message || e));
+        showErr(e.message);
       } finally {
-        btnSell.disabled = false;
-        btnKeep.disabled = false;
+        b.disabled = false;
       }
+    });
+  }
+
+  async function boot() {
+    try {
+      tg?.ready?.();
+      tg?.expand?.();
+      wireUI();
+      await loadMe();
+      await loadCases();
+    } catch (e) {
+      showErr(e.message || e);
     }
+  }
 
-    const onSell = (e) => { try { e.preventDefault(); e.stopPropagation(); } catch (_) {} doClaim('sell'); };
-    const onKeep = (e) => { try { e.preventDefault(); e.stopPropagation(); } catch (_) {} doClaim('keep'); };
-
-    btnSell.addEventListener('click', onSell);
-    btnSell.addEventListener('touchend', onSell, { passive: false });
-
-    btnKeep.addEventListener('click', onKeep);
-    btnKeep.addEventListener('touchend', onKeep, { passive: false });
-
-    // ===== Infinite roulette =====
-    const r = roulette || document.querySelector('.roulette');
-
-    function initInfiniteRoulette() {
-      if (!r || r.dataset.initialized === 'true') return;
-
-      const items = Array.from(r.children);
-      if (!items.length) return;
-
-      items.forEach(el => r.appendChild(el.cloneNode(true)));
-      items.forEach(el => r.appendChild(el.cloneNode(true)));
-
-      r._third = () => r.scrollWidth / 3;
-      requestAnimationFrame(() => { r.scrollLeft = r._third(); });
-
-      r.dataset.initialized = 'true';
-    }
-
-    function normalizeInfinite() {
-      if (!r || r.dataset.initialized !== 'true') return 0;
-      const third = r._third ? r._third() : (r.scrollWidth / 3);
-      if (!third) return 0;
-
-      if (r.scrollLeft < third * 0.35) { r.scrollLeft += third; return third; }
-      if (r.scrollLeft > third * 1.65) { r.scrollLeft -= third; return -third; }
-      return 0;
-    }
-
-    function pickForwardTarget(prizeId) {
-      const items = Array.from(r.querySelectorAll('.item'));
-      const candidates = items.filter(i => i.dataset.id == prizeId);
-      if (!candidates.length) return null;
-
-      const viewportCenter = r.scrollLeft + (r.clientWidth / 2);
-      const minLeadPx = r.clientWidth * 0.9;
-
-      let target = null;
-      let best = Infinity;
-
-      for (const c of candidates) {
-        const center = c.offsetLeft + (c.clientWidth / 2);
-        const delta = center - viewportCenter;
-        if (delta >= minLeadPx && delta < best) { best = delta; target = c; }
-      }
-
-      if (!target) {
-        r.scrollLeft += r.scrollWidth / 3;
-        const vc2 = r.scrollLeft + (r.clientWidth / 2);
-        best = Infinity;
-        for (const c of candidates) {
-          const center = c.offsetLeft + (c.clientWidth / 2);
-          const delta = center - vc2;
-          if (delta >= 0 && delta < best) { best = delta; target = c; }
-        }
-      }
-
-      return target || candidates[0];
-    }
-
-    function easeOutCubic(t) { return 1 - Math.pow(1 - t, 3); }
-
-    async function spinToPrize(prize) {
-      initInfiniteRoulette();
-
-      r.dataset.lockScroll = 'true';
-      r.style.pointerEvents = 'none';
-
-      r.querySelectorAll('.item.win').forEach(el => el.classList.remove('win'));
-
-      const SPIN_MS = 2200;
-      const speed = 1.35;
-      let startScroll = r.scrollLeft;
-      const spinDistance = SPIN_MS * speed;
-
-      await new Promise((resolve) => {
-        const t0 = performance.now();
-        const tick = (now) => {
-          const p = Math.min(1, (now - t0) / SPIN_MS);
-          r.scrollLeft = startScroll + spinDistance * p;
-          const shift = normalizeInfinite();
-          if (shift) startScroll += shift;
-          if (p < 1) requestAnimationFrame(tick);
-          else resolve();
-        };
-        requestAnimationFrame(tick);
-      });
-
-      const target = pickForwardTarget(prize.id);
-      if (!target) throw new Error('Не найден item для приза');
-
-      let to = (target.offsetLeft + target.clientWidth / 2) - (r.clientWidth / 2);
-      let from = r.scrollLeft;
-      const STOP_MS = 1600;
-
-      await new Promise((resolve) => {
-        const t1 = performance.now();
-        const tick = (now) => {
-          const p = Math.min(1, (now - t1) / STOP_MS);
-          r.scrollLeft = from + (to - from) * easeOutCubic(p);
-          const shift = normalizeInfinite();
-          if (shift) { from += shift; to += shift; }
-          if (p < 1) requestAnimationFrame(tick);
-          else resolve();
-        };
-        requestAnimationFrame(tick);
-      });
-
-      target.classList.add('win');
-      try { tg?.HapticFeedback?.notificationOccurred('success'); } catch (_) {}
-
-      r.dataset.lockScroll = 'false';
-      r.style.pointerEvents = '';
-    }
-
-    if (btn && r) {
-      const blockScroll = (e) => { try { e.preventDefault(); } catch (_) {} };
-      r.addEventListener('touchstart', blockScroll, { passive: false });
-      r.addEventListener('touchmove', blockScroll, { passive: false });
-      r.addEventListener('wheel', blockScroll, { passive: false });
-
-      btn.addEventListener('click', async () => {
-        if (pendingSpinId && pendingPrize) {
-          openClaim(pendingPrize);
-          return;
-        }
-
-        btn.disabled = true;
-        try {
-          const prize = await apiPost('/spin', { initData: tg?.initData || '', case_id: selectedCaseId });
-
-          if (balanceBadge && prize && typeof prize.balance === 'number') {
-            balanceBadge.textContent = `⭐ ${prize.balance}`;
-          }
-
-          await spinToPrize(prize);
-          openClaim(prize);
-          setTimeout(refreshRecentWins, 300);
-
-        } catch (e) {
-          alert('Ошибка: ' + (e?.message || e));
-          btn.disabled = false;
-          r.dataset.lockScroll = 'false';
-          r.style.pointerEvents = '';
-        }
-      });
-      (async () => {
-        await refreshPrizes();
-        initInfiniteRoulette();
-        refreshBalance();
-        refreshRecentWins();
-        setInterval(refreshRecentWins, 12000);
-        refreshInventory();
-        setTab('spin');
-      })();
-    } else {
-      console.warn('spinBtn или roulette не найдены');
-    }
-  </script>
+  document.addEventListener('DOMContentLoaded', boot);
+</script>
 </body>
 </html>
