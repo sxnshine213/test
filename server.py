@@ -1103,7 +1103,7 @@ def admin_create_prize(request: Request, req: PrizeIn):
                 cur.execute(
                     "INSERT INTO prizes (id, name, icon_url, cost, weight, is_active, sort_order, created_at, gift_id, is_unique) "
                     "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-                    (new_id, req.name, (req.icon_url or None), int(req.cost), int(req.weight), bool(req.is_active), int(req.sort_order), now),
+                    (new_id, req.name, (req.icon_url or None), int(req.cost), int(req.weight), bool(req.is_active), int(req.sort_order), now, (req.gift_id or None), bool(req.is_unique)),
                 )
     return {"id": new_id, "created_at": now, **req.model_dump()}
 
@@ -1117,7 +1117,7 @@ def admin_update_prize(request: Request, prize_id: int, req: PrizeIn):
                 cur.execute(
                     "UPDATE prizes SET name=%s, icon_url=%s, cost=%s, weight=%s, is_active=%s, sort_order=%s, gift_id=%s, is_unique=%s "
                     "WHERE id=%s RETURNING created_at",
-                    (req.name, (req.icon_url or None), int(req.cost), int(req.weight), bool(req.is_active), int(req.sort_order), int(prize_id)),
+                    (req.name, (req.icon_url or None), int(req.cost), int(req.weight), bool(req.is_active), int(req.sort_order), (req.gift_id or None), bool(req.is_unique), int(prize_id)),
                 )
                 row = cur.fetchone()
                 if not row:
