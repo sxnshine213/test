@@ -964,7 +964,7 @@ def admin_topups(request: Request, limit: int = Query(80, ge=1, le=500)):
             "stars_amount": int(r[2]),
             "status": r[3],
             "telegram_charge_id": r[4],
-            "created_at": int(r[5]), "is_locked": bool(r[6]), "is_unique": bool(r[7]),
+            "created_at": int(r[5]),
             "paid_at": int(r[6]) if r[6] else None,
         })
     return {"items": items}
