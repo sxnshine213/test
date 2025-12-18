@@ -366,22 +366,51 @@ def extract_tg_user_public(init_data: str) -> Optional[dict]:
 
 # ===== Telegram Bot API helper (Stars) =====
 def tg_api(method: str, payload: dict):
+    """Call Telegram Bot API.
+    - On HTTP/network errors -> HTTP 502
+    - On Telegram 'ok=false' -> propagate Telegram error_code (e.g. 400/403) and description
+    """
     if not BOT_TOKEN:
         raise HTTPException(status_code=500, detail="BOT_TOKEN is not set")
 
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/{method}"
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+
+    raw = None
+    obj = None
     try:
         with urllib.request.urlopen(req, timeout=20) as resp:
             raw = resp.read().decode("utf-8")
-            obj = json.loads(raw)
     except Exception as e:
+        # urllib may raise HTTPError; it still contains body
+        try:
+            if hasattr(e, "read"):
+                raw = e.read().decode("utf-8")
+        except Exception:
+            raw = None
+        if raw:
+            try:
+                obj = json.loads(raw)
+            except Exception:
+                obj = None
+        # If Telegram responded with JSON error, surface it below.
+        if obj and isinstance(obj, dict) and obj.get("ok") is False:
+            code = int(obj.get("error_code") or 502)
+            desc = obj.get("description") or str(obj)
+            raise HTTPException(status_code=code, detail=f"telegram: {desc}")
         raise HTTPException(status_code=502, detail=f"telegram api error: {e}")
 
+    try:
+        obj = json.loads(raw or "{}")
+    except Exception:
+        raise HTTPException(status_code=502, detail=f"telegram api invalid json: {raw!r}")
+
     if not obj.get("ok"):
-        raise HTTPException(status_code=502, detail=f"telegram api not ok: {obj}")
-    return obj["result"]
+        code = int(obj.get("error_code") or 502)
+        desc = obj.get("description") or str(obj)
+        raise HTTPException(status_code=code, detail=f"telegram: {desc}")
+    return obj.get("result")
 
 
 # ===== Helpers =====
@@ -970,6 +999,15 @@ def admin_topups(request: Request, limit: int = Query(80, ge=1, le=500)):
     return {"items": items}
 
 
+
+
+@app.get("/admin/my_star_balance")
+def admin_my_star_balance(request: Request):
+    """Return bot's current Telegram Stars balance (Bot API 9.1+)."""
+    require_admin(request)
+    # getMyStarBalance returns a StarAmount object in Bot API. Surface raw result.
+    result = tg_api("getMyStarBalance", {})
+    return {"ok": True, "result": result}
 @app.get("/admin/user/{tg_user_id}")
 def admin_user(request: Request, tg_user_id: str):
     require_admin(request)
