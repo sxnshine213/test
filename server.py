@@ -538,6 +538,15 @@ def get_or_create_user(cur, tg_user_id: str, public: Optional[dict] = None) -> i
     return int(row[0]) if row else START_BALANCE
 
 
+
+def get_balance(cur, tg_user_id: str) -> int:
+    """Return user's current balance from DB. Assumes user exists."""
+    cur.execute("SELECT balance FROM users WHERE tg_user_id=%s", (tg_user_id,))
+    row = cur.fetchone()
+    # Should exist because get_or_create_user() is called before most endpoints
+    return int(row[0]) if row and row[0] is not None else 0
+
+
 def fetch_active_prizes(cur) -> list[dict]:
     cur.execute(
         "SELECT id, name, icon_url, cost, weight FROM prizes "
