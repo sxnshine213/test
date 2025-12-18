@@ -863,6 +863,7 @@ def topup_create(req: TopupCreateReq):
         "title": "Пополнение баланса",
         "description": f"+{stars} ⭐ в игре",
         "payload": payload,
+        "provider_token": "",
         "currency": "XTR",
         "prices": [{"label": f"+{stars} ⭐", "amount": stars}],
     })
@@ -881,7 +882,68 @@ async def tg_webhook(request: Request):
 
     if "pre_checkout_query" in update:
         q = update["pre_checkout_query"]
-        tg_api("answerPreCheckoutQuery", {"pre_checkout_query_id": q["id"], "ok": True})
+        # Validate Stars invoice before approving. This prevents accidental/double payments
+        # and protects from mismatched payload/amount.
+        try:
+            currency = q.get("currency")
+            total_amount = int(q.get("total_amount", 0))
+            invoice_payload = q.get("invoice_payload", "")
+            from_id = str((q.get("from") or {}).get("id") or "")
+
+            ok = True
+            err = None
+
+            if currency != "XTR":
+                ok = False
+                err = "Unsupported currency"
+            elif total_amount <= 0:
+                ok = False
+                err = "Bad amount"
+            elif not invoice_payload:
+                ok = False
+                err = "Missing payload"
+
+            if ok:
+                with pool.connection() as con:
+                    with con:
+                        with con.cursor() as cur:
+                            cur.execute(
+                                "SELECT tg_user_id, stars_amount, status FROM topups WHERE payload=%s FOR UPDATE",
+                                (invoice_payload,),
+                            )
+                            row = cur.fetchone()
+                            if not row:
+                                ok = False
+                                err = "Unknown invoice"
+                            else:
+                                uid, expected, status = str(row[0]), int(row[1]), str(row[2])
+                                if status == "paid":
+                                    # already processed; allow Telegram to proceed, we'll no-op on successful_payment
+                                    ok = True
+                                elif uid != from_id:
+                                    ok = False
+                                    err = "Wrong payer"
+                                elif expected != total_amount:
+                                    ok = False
+                                    err = "Amount mismatch"
+                                elif status not in ("created", "pending"):
+                                    # any other status means we don't expect a payment right now
+                                    ok = False
+                                    err = "Bad status"
+
+            payload = {"pre_checkout_query_id": q["id"], "ok": bool(ok)}
+            if not ok:
+                payload["error_message"] = err or "Payment rejected"
+            tg_api("answerPreCheckoutQuery", payload)
+        except Exception:
+            # In case of unexpected errors, reject to avoid hanging payments.
+            try:
+                tg_api(
+                    "answerPreCheckoutQuery",
+                    {"pre_checkout_query_id": q.get("id"), "ok": False, "error_message": "Temporary error"},
+                )
+            except Exception:
+                pass
         return {"ok": True}
 
     msg = update.get("message") or {}
@@ -1008,6 +1070,103 @@ def admin_my_star_balance(request: Request):
     # getMyStarBalance returns a StarAmount object in Bot API. Surface raw result.
     result = tg_api("getMyStarBalance", {})
     return {"ok": True, "result": result}
+
+@app.get("/admin/star_transactions")
+def admin_star_transactions(request: Request, limit: int = 50, offset: int | None = None):
+    """Debug helper: fetch recent Telegram Stars transactions for the bot."""
+    require_admin(request)
+    payload: dict = {"limit": int(limit)}
+    if offset is not None:
+        payload["offset"] = int(offset)
+    result = tg_api("getStarTransactions", payload)
+    return {"ok": True, "result": result}
+
+
+def _find_invoice_payload(obj):
+    """Best-effort recursive search for invoice_payload in StarTransaction structure."""
+    if isinstance(obj, dict):
+        if "invoice_payload" in obj and obj["invoice_payload"]:
+            return obj["invoice_payload"]
+        for v in obj.values():
+            found = _find_invoice_payload(v)
+            if found:
+                return found
+    elif isinstance(obj, list):
+        for v in obj:
+            found = _find_invoice_payload(v)
+            if found:
+                return found
+    return None
+
+
+def _find_star_amount(obj):
+    """Best-effort: return integer Stars amount from StarTransaction structure."""
+    if isinstance(obj, dict):
+        # common keys: amount, star_amount, total_amount
+        for k in ("amount", "star_amount", "total_amount"):
+            if k in obj and obj[k] is not None:
+                try:
+                    return int(obj[k])
+                except Exception:
+                    pass
+        for v in obj.values():
+            found = _find_star_amount(v)
+            if found is not None:
+                return found
+    elif isinstance(obj, list):
+        for v in obj:
+            found = _find_star_amount(v)
+            if found is not None:
+                return found
+    return None
+
+
+@app.post("/admin/reconcile_star_transactions")
+def admin_reconcile_star_transactions(request: Request, limit: int = 200):
+    """
+    Safety net: reconcile bot Stars transactions with local `topups` table.
+    Use if webhook was down and some successful payments were missed.
+    """
+    require_admin(request)
+    result = tg_api("getStarTransactions", {"limit": int(limit)})
+    txs = (result or {}).get("transactions") or (result or {}).get("result", {}).get("transactions") or []
+    fixed = 0
+    checked = 0
+
+    with pool.connection() as con:
+        with con:
+            with con.cursor() as cur:
+                for tx in txs:
+                    checked += 1
+                    payload = _find_invoice_payload(tx)
+                    if not payload:
+                        continue
+                    amt = _find_star_amount(tx)
+                    if amt is None:
+                        continue
+                    tx_id = str(tx.get("id") or "")
+
+                    cur.execute("SELECT tg_user_id, stars_amount, status FROM topups WHERE payload=%s FOR UPDATE", (payload,))
+                    row = cur.fetchone()
+                    if not row:
+                        continue
+                    uid, expected, status = str(row[0]), int(row[1]), str(row[2])
+                    if status == "paid":
+                        continue
+                    if expected != int(amt):
+                        continue
+
+                    # Apply the same accounting as in webhook
+                    cur.execute("UPDATE users SET balance = balance + %s WHERE tg_user_id=%s", (expected, uid))
+                    cur.execute(
+                        "UPDATE topups SET status='paid', telegram_charge_id=%s, paid_at=%s WHERE payload=%s",
+                        (tx_id or None, int(time.time()), payload),
+                    )
+                    fixed += 1
+
+    return {"ok": True, "checked": checked, "fixed": fixed}
+
+
 @app.get("/admin/user/{tg_user_id}")
 def admin_user(request: Request, tg_user_id: str):
     require_admin(request)
@@ -1260,3 +1419,10 @@ def admin_claim_fulfill(claim_id: int, req: AdminClaimNote, request: Request):
     return {"ok": True, "id": int(claim_id), "status": "fulfilled"}
 
 
+
+
+if __name__ == '__main__':
+    import os
+    import uvicorn
+    port = int(os.environ.get('PORT', '8000'))
+    uvicorn.run('server:app', host='0.0.0.0', port=port, proxy_headers=True)
