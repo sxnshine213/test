@@ -86,6 +86,10 @@ class InventoryReq(WithInitData):
     pass
 
 
+class InventorySellReq(WithInitData):
+    inventory_id: int
+
+
 class TopupCreateReq(WithInitData):
     stars: int
 
@@ -455,7 +459,7 @@ def inventory(req: InventoryReq):
                 public = extract_tg_user_public(req.initData)
                 get_or_create_user(cur, uid, public)
                 cur.execute(
-                    "SELECT i.prize_id, i.prize_name, i.prize_cost, i.created_at, p.icon_url "
+                    "SELECT i.id, i.prize_id, i.prize_name, i.prize_cost, i.created_at, p.icon_url "
                     "FROM inventory i LEFT JOIN prizes p ON p.id = i.prize_id WHERE i.tg_user_id=%s "
                     "ORDER BY created_at DESC LIMIT 200",
                     (uid,),
@@ -463,12 +467,44 @@ def inventory(req: InventoryReq):
                 rows = cur.fetchall()
 
     return {"items": [{
-        "prize_id": int(r[0]),
-        "prize_name": r[1],
-        "prize_cost": int(r[2]),
-        "created_at": int(r[3]),
-        "icon_url": ((r[4] or "").strip() or None),
+        "inventory_id": int(r[0]),
+        "prize_id": int(r[1]),
+        "prize_name": r[2],
+        "prize_cost": int(r[3]),
+        "created_at": int(r[4]),
+        "icon_url": ((r[5] or "").strip() or None),
     } for r in rows]}
+
+
+@app.post("/inventory/sell")
+def inventory_sell(req: InventorySellReq):
+    uid = extract_tg_user_id(req.initData)
+    inv_id = int(req.inventory_id)
+
+    with pool.connection() as con:
+        with con:
+            with con.cursor() as cur:
+                public = extract_tg_user_public(req.initData)
+                get_or_create_user(cur, uid, public)
+
+                cur.execute(
+                    "SELECT prize_cost FROM inventory WHERE id=%s AND tg_user_id=%s FOR UPDATE",
+                    (inv_id, uid),
+                )
+                row = cur.fetchone()
+                if not row:
+                    raise HTTPException(status_code=404, detail="inventory item not found")
+
+                prize_cost = int(row[0] or 0)
+
+                cur.execute("DELETE FROM inventory WHERE id=%s AND tg_user_id=%s", (inv_id, uid))
+                cur.execute(
+                    "UPDATE users SET balance=balance+%s WHERE tg_user_id=%s RETURNING balance",
+                    (prize_cost, uid),
+                )
+                bal = int(cur.fetchone()[0])
+
+    return {"ok": True, "inventory_id": inv_id, "credited": prize_cost, "balance": bal}
 
 
 @app.post("/spin")
