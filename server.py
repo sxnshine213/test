@@ -205,7 +205,7 @@ def migrate(conn) -> None:
 def ensure_user(conn, tg_user_id: int) -> None:
     now = int(time.time())
     with conn.cursor() as cur:
-        cur.execute("SELECT tg_user_id FROM users WHERE tg_user_id=%s", (tg_user_id,))
+        cur.execute("SELECT tg_user_id FROM users WHERE tg_user_id::bigint=%s", (int(tg_user_id),))
         row = cur.fetchone()
         if row:
             return
