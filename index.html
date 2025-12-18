@@ -153,6 +153,23 @@
     .inv-name { font-size: 12px; font-weight: 800; }
     .inv-sub { font-size: 11px; opacity: 0.75; }
 
+
+    .inv-actions {
+      margin-left: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      align-items: stretch;
+    }
+    .inv-actions .inv-btn {
+      flex: 0 0 auto;
+      padding: 6px 10px;
+      border-radius: 10px;
+      font-size: 11px;
+      line-height: 1.1;
+      min-width: 86px;
+    }
+
     /* Bottom tabs */
     .bottom-nav {
       position: fixed;
@@ -461,6 +478,73 @@
     const tabTop = document.getElementById('tabTop');
 
     const inventoryList = document.getElementById('inventoryList');
+    if (inventoryList) {
+      inventoryList.addEventListener('click', onInventoryAction);
+      inventoryList.addEventListener('touchend', onInventoryAction, { passive: false });
+    }
+
+    async function sellInventoryItem(invId, btnEl) {
+      if (!invId) return;
+      if (btnEl) btnEl.disabled = true;
+      try {
+        const res = await apiPost('/inventory/sell', {
+          initData: tg?.initData || '',
+          inventory_id: invId
+        });
+
+        if (balanceBadge && res && typeof res.balance === 'number') {
+          balanceBadge.textContent = `⭐ ${res.balance}`;
+        } else {
+          refreshBalance();
+        }
+
+    async function withdrawInventoryItem(invId, btnEl) {
+      if (!invId) return;
+      if (btnEl) btnEl.disabled = true;
+
+      try {
+        const res = await apiPost('/inventory/withdraw', {
+          initData: tg?.initData || '',
+          inventory_id: invId
+        });
+
+        // Refresh UI
+        await refreshBalance();
+        await refreshInventory();
+
+        const msg = (res && res.message) ? String(res.message) : '';
+        if (msg) alert(msg);
+      } catch (e) {
+        alert(e?.message || 'Ошибка вывода');
+      } finally {
+        if (btnEl) btnEl.disabled = false;
+      }
+    }
+
+
+        await refreshInventory();
+      } catch (e) {
+        alert('Ошибка: ' + (e?.message || e));
+      } finally {
+        if (btnEl) btnEl.disabled = false;
+      }
+    }
+
+    function onInventoryAction(e) {
+      const btn = e?.target?.closest ? e.target.closest('button[data-action][data-inv-id]') : null;
+      if (!btn) return;
+      try { e.preventDefault(); e.stopPropagation(); } catch (_) {}
+
+      const action = btn.getAttribute('data-action');
+      const invId = Number(btn.getAttribute('data-inv-id') || 0);
+
+      if (action === 'sell') {
+        await sellInventoryItem(invId, btn);
+      } else if (action === 'withdraw') {
+        await withdrawInventoryItem(invId, btn);
+      }
+    }
+
     const inventoryEmpty = document.getElementById('inventoryEmpty');
 
     const topList = document.getElementById('topList');
@@ -684,13 +768,19 @@
           const img = (it && it.icon_url) ? String(it.icon_url).trim() : giftImageById(it.prize_id || it.id);
           const name = it.prize_name || it.name || 'Подарок';
           const cost = it.prize_cost ?? it.cost ?? '';
+          const locked = !!it.is_locked;
           const when = it.created_at ? new Date(it.created_at * 1000).toLocaleString() : '';
+          const invId = Number(it.inventory_id ?? it.inv_id ?? it.inventoryId ?? 0);
           return `
-            <div class="inv-card">
+            <div class="inv-card" data-inv-id="${invId}">
               <img src="${img}" alt="gift" />
               <div class="inv-meta">
                 <div class="inv-name">${name}</div>
                 <div class="inv-sub">⭐ ${cost} ${when ? '• ' + when : ''}</div>
+              </div>
+              <div class="inv-actions">
+                <button class="btn btn-sell inv-btn" data-action="sell" data-inv-id="${invId}" ${locked ? "disabled" : ""}>Продать</button>
+                <button class="btn btn-keep inv-btn" data-action="withdraw" data-inv-id="${invId}" ${locked ? "disabled" : ""}>Вывести</button>
               </div>
             </div>
           `;

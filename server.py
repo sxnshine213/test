@@ -90,6 +90,10 @@ class InventorySellReq(WithInitData):
     inventory_id: int
 
 
+class InventoryWithdrawReq(WithInitData):
+    inventory_id: int
+
+
 class TopupCreateReq(WithInitData):
     stars: int
 
@@ -102,6 +106,10 @@ class AdminAdjustReq(BaseModel):
     tg_user_id: str
     delta: int
 
+class AdminClaimNote(BaseModel):
+    note: Optional[str] = None
+
+
 
 class PrizeIn(BaseModel):
     name: str
@@ -110,6 +118,12 @@ class PrizeIn(BaseModel):
     weight: int
     is_active: bool = True
     sort_order: int = 0
+    # Telegram Gift configuration:
+    # - Regular gifts: set gift_id and keep is_unique=False (default)
+    # - Unique gifts: set is_unique=True (gift_id can be empty); handled via admin claim flow
+    gift_id: Optional[str] = None
+    is_unique: bool = False
+
 
 
 class PrizeOut(PrizeIn):
@@ -201,6 +215,30 @@ def init_db():
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_spins_time ON spins(created_at)")
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_inv_user_time ON inventory(tg_user_id, created_at)")
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_topups_user_time ON topups(tg_user_id, created_at)")
+                # gifts/withdrawals extensions
+                cur.execute("ALTER TABLE prizes ADD COLUMN IF NOT EXISTS gift_id TEXT")
+                cur.execute("ALTER TABLE prizes ADD COLUMN IF NOT EXISTS is_unique BOOLEAN DEFAULT FALSE")
+                cur.execute("ALTER TABLE inventory ADD COLUMN IF NOT EXISTS is_locked BOOLEAN DEFAULT FALSE")
+                cur.execute("ALTER TABLE inventory ADD COLUMN IF NOT EXISTS locked_reason TEXT")
+
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS claims (
+                      id BIGSERIAL PRIMARY KEY,
+                      tg_user_id TEXT NOT NULL,
+                      inventory_id BIGINT NOT NULL,
+                      prize_id BIGINT NOT NULL,
+                      prize_name TEXT NOT NULL,
+                      prize_cost INTEGER NOT NULL,
+                      status TEXT NOT NULL,
+                      note TEXT,
+                      created_at BIGINT NOT NULL,
+                      updated_at BIGINT
+                    )
+                    """
+                )
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_claims_status_time ON claims(status, created_at)")
+
 
                 # seed prizes if empty
                 cur.execute("SELECT COUNT(*) FROM prizes")
@@ -209,8 +247,8 @@ def init_db():
                     now = int(time.time())
                     for p in DEFAULT_PRIZES:
                         cur.execute(
-                            "INSERT INTO prizes (id, name, icon_url, cost, weight, is_active, sort_order, created_at) "
-                            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
+                            "INSERT INTO prizes (id, name, icon_url, cost, weight, is_active, sort_order, created_at, gift_id, is_unique) "
+                            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                             (
                                 int(p["id"]),
                                 str(p["name"]),
@@ -220,6 +258,8 @@ def init_db():
                                 bool(p.get("is_active", True)),
                                 int(p.get("sort_order", 0)),
                                 now,
+                                None,
+                                False,
                             ),
                         )
 
@@ -492,6 +532,8 @@ def inventory_sell(req: InventorySellReq):
                     (inv_id, uid),
                 )
                 row = cur.fetchone()
+                if row and len(row) >= 4 and bool(row[3]):
+                    raise HTTPException(status_code=409, detail="item is locked")
                 if not row:
                     raise HTTPException(status_code=404, detail="inventory item not found")
 
@@ -505,6 +547,79 @@ def inventory_sell(req: InventorySellReq):
                 bal = int(cur.fetchone()[0])
 
     return {"ok": True, "inventory_id": inv_id, "credited": prize_cost, "balance": bal}
+
+
+
+@app.post("/inventory/withdraw")
+def inventory_withdraw(req: InventoryWithdrawReq):
+    """
+    Withdraw inventory item:
+      - Regular prize (is_unique = FALSE): bot sends gift via sendGift and item is removed from inventory
+      - Unique prize (is_unique = TRUE): create a claim for admins and lock the inventory item
+    """
+    uid = extract_tg_user_id(req.initData)
+
+    with pool.connection() as con:
+        with con:
+            with con.cursor() as cur:
+                public = extract_tg_user_public(req.initData)
+                get_or_create_user(cur, uid, public)
+
+                # Lock inventory row to avoid double-withdraw/sell
+                cur.execute(
+                    "SELECT i.id, i.prize_id, i.prize_name, i.prize_cost, COALESCE(i.is_locked, FALSE) AS is_locked, "
+                    "COALESCE(p.is_unique, FALSE) AS is_unique, COALESCE(p.gift_id, '') AS gift_id "
+                    "FROM inventory i "
+                    "LEFT JOIN prizes p ON p.id = i.prize_id "
+                    "WHERE i.id = %s AND i.tg_user_id = %s "
+                    "FOR UPDATE",
+                    (int(req.inventory_id), uid),
+                )
+                row = cur.fetchone()
+                if not row:
+                    raise HTTPException(status_code=404, detail="inventory item not found")
+
+                inv_id, prize_id, prize_name, prize_cost, is_locked, is_unique, gift_id = row
+                if is_locked:
+                    # idempotent response for already requested unique gifts
+                    cur.execute(
+                        "SELECT id, status FROM claims WHERE inventory_id = %s ORDER BY created_at DESC LIMIT 1",
+                        (int(inv_id),),
+                    )
+                    c = cur.fetchone()
+                    if c:
+                        return {"ok": True, "status": str(c[1]), "message": "Заявка уже существует."}
+                    raise HTTPException(status_code=409, detail="item is locked")
+
+                if bool(is_unique):
+                    now = int(time.time())
+                    # create claim
+                    cur.execute(
+                        "INSERT INTO claims (tg_user_id, inventory_id, prize_id, prize_name, prize_cost, status, created_at) "
+                        "VALUES (%s,%s,%s,%s,%s,'pending',%s) RETURNING id",
+                        (uid, int(inv_id), int(prize_id), str(prize_name), int(prize_cost), now),
+                    )
+                    claim_id = int(cur.fetchone()[0])
+                    # lock item in inventory until admins process
+                    cur.execute(
+                        "UPDATE inventory SET is_locked = TRUE, locked_reason = 'claim_pending' WHERE id = %s",
+                        (int(inv_id),),
+                    )
+                    return {"ok": True, "status": "pending", "claim_id": claim_id, "message": "Заявка на уникальный подарок создана."}
+
+                # regular gifts: send by bot
+                gid = (gift_id or "").strip()
+                if not gid:
+                    raise HTTPException(status_code=400, detail="gift_id is not configured for this prize")
+
+                # Bot API: sendGift supports user_id or chat_id. Use user_id for private users.
+                tg_api("sendGift", {"gift_id": gid, "user_id": int(uid)})
+
+                # remove from inventory
+                cur.execute("DELETE FROM inventory WHERE id = %s AND tg_user_id = %s", (int(inv_id), uid))
+
+                bal = get_balance(cur, uid)
+                return {"ok": True, "status": "sent", "message": "Подарок отправлен ботом.", "balance": int(bal)}
 
 
 @app.post("/spin")
@@ -836,7 +951,7 @@ def admin_topups(request: Request, limit: int = Query(80, ge=1, le=500)):
             "stars_amount": int(r[2]),
             "status": r[3],
             "telegram_charge_id": r[4],
-            "created_at": int(r[5]),
+            "created_at": int(r[5]), "is_locked": bool(r[6]), "is_unique": bool(r[7]),
             "paid_at": int(r[6]) if r[6] else None,
         })
     return {"items": items}
@@ -942,7 +1057,7 @@ def admin_list_prizes(request: Request):
         with con:
             with con.cursor() as cur:
                 cur.execute(
-                    "SELECT id, name, icon_url, cost, weight, is_active, sort_order, created_at "
+                    "SELECT id, name, icon_url, cost, weight, is_active, sort_order, created_at, COALESCE(gift_id,''), COALESCE(is_unique,FALSE) "
                     "FROM prizes ORDER BY sort_order ASC, id ASC"
                 )
                 rows = cur.fetchall()
@@ -956,7 +1071,7 @@ def admin_list_prizes(request: Request):
             "weight": int(r[4]),
             "is_active": bool(r[5]),
             "sort_order": int(r[6]),
-            "created_at": int(r[7]),
+            "created_at": int(r[7]), "gift_id": (r[8] or "").strip() or None, "is_unique": bool(r[9]),
         })
     return {"items": items}
 
@@ -973,8 +1088,8 @@ def admin_create_prize(request: Request, req: PrizeIn):
                 new_id = int(cur.fetchone()[0])
 
                 cur.execute(
-                    "INSERT INTO prizes (id, name, icon_url, cost, weight, is_active, sort_order, created_at) "
-                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
+                    "INSERT INTO prizes (id, name, icon_url, cost, weight, is_active, sort_order, created_at, gift_id, is_unique) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                     (new_id, req.name, (req.icon_url or None), int(req.cost), int(req.weight), bool(req.is_active), int(req.sort_order), now),
                 )
     return {"id": new_id, "created_at": now, **req.model_dump()}
@@ -987,7 +1102,7 @@ def admin_update_prize(request: Request, prize_id: int, req: PrizeIn):
         with con:
             with con.cursor() as cur:
                 cur.execute(
-                    "UPDATE prizes SET name=%s, icon_url=%s, cost=%s, weight=%s, is_active=%s, sort_order=%s "
+                    "UPDATE prizes SET name=%s, icon_url=%s, cost=%s, weight=%s, is_active=%s, sort_order=%s, gift_id=%s, is_unique=%s "
                     "WHERE id=%s RETURNING created_at",
                     (req.name, (req.icon_url or None), int(req.cost), int(req.weight), bool(req.is_active), int(req.sort_order), int(prize_id)),
                 )
@@ -1009,3 +1124,88 @@ def admin_delete_prize(request: Request, prize_id: int):
                 if not row:
                     raise HTTPException(status_code=404, detail="prize not found")
     return {"ok": True, "deleted": int(prize_id)}
+
+
+
+@app.get("/admin/claims")
+def admin_claims(request: Request, status: str = Query("pending"), limit: int = Query(100, ge=1, le=500)):
+    require_admin(request)
+    with pool.connection() as con:
+        with con.cursor() as cur:
+            cur.execute(
+                "SELECT id, tg_user_id, inventory_id, prize_id, prize_name, prize_cost, status, note, created_at, updated_at "
+                "FROM claims "
+                "WHERE (%s = '' OR status = %s) "
+                "ORDER BY created_at DESC "
+                "LIMIT %s",
+                (status or "", status or "", int(limit)),
+            )
+            rows = cur.fetchall()
+
+    items = []
+    for r in rows:
+        items.append(
+            {
+                "id": int(r[0]),
+                "tg_user_id": r[1],
+                "inventory_id": int(r[2]),
+                "prize_id": int(r[3]),
+                "prize_name": r[4],
+                "prize_cost": int(r[5]),
+                "status": r[6],
+                "note": r[7],
+                "created_at": int(r[8]),
+                "updated_at": int(r[9] or 0) or None,
+            }
+        )
+    return {"items": items}
+
+
+def _set_claim_status(cur, claim_id: int, new_status: str, note: Optional[str] = None):
+    now = int(time.time())
+    cur.execute("SELECT id, inventory_id, status FROM claims WHERE id = %s", (int(claim_id),))
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="claim not found")
+    inv_id = int(row[1])
+    cur.execute(
+        "UPDATE claims SET status = %s, note = COALESCE(%s, note), updated_at = %s WHERE id = %s",
+        (new_status, note, now, int(claim_id)),
+    )
+    return inv_id
+
+
+@app.post("/admin/claims/{claim_id}/approve")
+def admin_claim_approve(claim_id: int, req: AdminClaimNote, request: Request):
+    require_admin(request)
+    with pool.connection() as con:
+        with con:
+            with con.cursor() as cur:
+                _set_claim_status(cur, claim_id, "approved", req.note)
+    return {"ok": True, "id": int(claim_id), "status": "approved"}
+
+
+@app.post("/admin/claims/{claim_id}/reject")
+def admin_claim_reject(claim_id: int, req: AdminClaimNote, request: Request):
+    require_admin(request)
+    with pool.connection() as con:
+        with con:
+            with con.cursor() as cur:
+                inv_id = _set_claim_status(cur, claim_id, "rejected", req.note)
+                # unlock inventory so user can sell/withdraw again
+                cur.execute("UPDATE inventory SET is_locked = FALSE, locked_reason = NULL WHERE id = %s", (int(inv_id),))
+    return {"ok": True, "id": int(claim_id), "status": "rejected"}
+
+
+@app.post("/admin/claims/{claim_id}/fulfill")
+def admin_claim_fulfill(claim_id: int, req: AdminClaimNote, request: Request):
+    require_admin(request)
+    with pool.connection() as con:
+        with con:
+            with con.cursor() as cur:
+                inv_id = _set_claim_status(cur, claim_id, "fulfilled", req.note)
+                # remove item from inventory - it has been handed over manually
+                cur.execute("DELETE FROM inventory WHERE id = %s", (int(inv_id),))
+    return {"ok": True, "id": int(claim_id), "status": "fulfilled"}
+
+
