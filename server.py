@@ -565,13 +565,13 @@ def inventory_withdraw(req: InventoryWithdrawReq):
                 public = extract_tg_user_public(req.initData)
                 get_or_create_user(cur, uid, public)
 
-                # Lock inventory row to avoid double-withdraw/sell
+                # Lock inventory row to avoid double-withdraw/sell.
+                # IMPORTANT: do not use LEFT JOIN ... FOR UPDATE (Postgres forbids locking the nullable side of an outer join).
+                # We lock the inventory row first, then read prize properties in a separate query.
                 cur.execute(
-                    "SELECT i.id, i.prize_id, i.prize_name, i.prize_cost, COALESCE(i.is_locked, FALSE) AS is_locked, "
-                    "COALESCE(p.is_unique, FALSE) AS is_unique, COALESCE(p.gift_id, '') AS gift_id "
-                    "FROM inventory i "
-                    "LEFT JOIN prizes p ON p.id = i.prize_id "
-                    "WHERE i.id = %s AND i.tg_user_id = %s "
+                    "SELECT id, prize_id, prize_name, prize_cost, COALESCE(is_locked, FALSE) AS is_locked "
+                    "FROM inventory "
+                    "WHERE id = %s AND tg_user_id = %s "
                     "FOR UPDATE",
                     (int(req.inventory_id), uid),
                 )
@@ -579,7 +579,20 @@ def inventory_withdraw(req: InventoryWithdrawReq):
                 if not row:
                     raise HTTPException(status_code=404, detail="inventory item not found")
 
-                inv_id, prize_id, prize_name, prize_cost, is_locked, is_unique, gift_id = row
+                inv_id, prize_id, prize_name, prize_cost, is_locked = row
+
+                # Read prize attributes (is_unique, gift_id). Prize row might be missing if admin deleted it; handle safely.
+                cur.execute(
+                    "SELECT COALESCE(is_unique, FALSE) AS is_unique, COALESCE(gift_id, '') AS gift_id "
+                    "FROM prizes WHERE id = %s",
+                    (int(prize_id),),
+                )
+                prow = cur.fetchone()
+                if prow:
+                    is_unique, gift_id = bool(prow[0]), str(prow[1] or "")
+                else:
+                    is_unique, gift_id = False, ""
+
                 if is_locked:
                     # idempotent response for already requested unique gifts
                     cur.execute(
