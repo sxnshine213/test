@@ -18,6 +18,46 @@ from psycopg_pool import ConnectionPool
 
 app = FastAPI()
 
+# Auto-configure webhook on startup (Render-friendly).
+# Requires a public base URL (RENDER_EXTERNAL_URL or WEBHOOK_BASE_URL / WEBHOOK_URL).
+WEBHOOK_URL = os.getenv("WEBHOOK_URL", "").strip()
+WEBHOOK_BASE_URL = os.getenv("WEBHOOK_BASE_URL", "").strip()
+RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL", "").strip()
+AUTO_SET_WEBHOOK = os.getenv("AUTO_SET_WEBHOOK", "1").strip() not in ("0", "false", "False", "")
+
+def _derive_webhook_url() -> str:
+    if WEBHOOK_URL:
+        return WEBHOOK_URL
+    base = WEBHOOK_BASE_URL or RENDER_EXTERNAL_URL
+    base = (base or "").rstrip("/")
+    if not base:
+        return ""
+    return base + "/tg/webhook"
+
+@app.on_event("startup")
+def _startup_set_webhook():
+    if not AUTO_SET_WEBHOOK:
+        return
+    if not BOT_TOKEN:
+        return
+    url = _derive_webhook_url()
+    if not url:
+        return
+    payload = {
+        "url": url,
+        "allowed_updates": ["message", "callback_query", "pre_checkout_query"],
+        "drop_pending_updates": False,
+    }
+    if TG_WEBHOOK_SECRET:
+        payload["secret_token"] = TG_WEBHOOK_SECRET
+    try:
+        # setWebhook may occasionally fail transiently; do not prevent startup.
+        tg_api_quick("setWebhook", payload, timeout=6.0, retries=2)
+        print(f"[startup] webhook set to: {url}")
+    except Exception as e:
+        print(f"[startup] setWebhook failed: {e}")
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # можно ограничить доменами позже
@@ -412,6 +452,47 @@ def tg_api(method: str, payload: dict):
         raise HTTPException(status_code=code, detail=f"telegram: {desc}")
     return obj.get("result")
 
+
+
+def tg_api_timeout(method: str, payload: dict, timeout: float):
+    """Telegram Bot API call with a custom timeout (seconds)."""
+    if not BOT_TOKEN:
+        raise HTTPException(status_code=500, detail="BOT_TOKEN is not set")
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/{method}"
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+    raw = None
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read().decode("utf-8")
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"telegram api error: {e}")
+
+    try:
+        obj = json.loads(raw or "{}")
+    except Exception:
+        raise HTTPException(status_code=502, detail=f"telegram api invalid json: {raw!r}")
+
+    if not obj.get("ok"):
+        code = int(obj.get("error_code") or 502)
+        desc = obj.get("description") or str(obj)
+        raise HTTPException(status_code=code, detail=f"telegram: {desc}")
+    return obj.get("result")
+
+
+def tg_api_quick(method: str, payload: dict, timeout: float = 4.0, retries: int = 2):
+    """Fast Telegram call for time-sensitive flows (e.g., answerPreCheckoutQuery)."""
+    last = None
+    for i in range(max(1, int(retries))):
+        try:
+            return tg_api_timeout(method, payload, timeout=timeout)
+        except Exception as e:
+            last = e
+            if i < retries - 1:
+                time.sleep(0.2)
+    if last:
+        raise last
+    raise HTTPException(status_code=502, detail="telegram api error")
 
 # ===== Helpers =====
 def mask_uid(uid: str) -> str:
@@ -907,6 +988,7 @@ async def tg_webhook(request: Request):
                 with pool.connection() as con:
                     with con:
                         with con.cursor() as cur:
+                            cur.execute("SET LOCAL statement_timeout = %s", ("2500ms",))
                             cur.execute(
                                 "SELECT tg_user_id, stars_amount, status FROM topups WHERE payload=%s FOR UPDATE",
                                 (invoice_payload,),
@@ -934,14 +1016,12 @@ async def tg_webhook(request: Request):
             payload = {"pre_checkout_query_id": q["id"], "ok": bool(ok)}
             if not ok:
                 payload["error_message"] = err or "Payment rejected"
-            tg_api("answerPreCheckoutQuery", payload)
+            tg_api_quick("answerPreCheckoutQuery", payload, timeout=4.0, retries=2)
         except Exception:
-            # In case of unexpected errors, reject to avoid hanging payments.
+            # In case of unexpected errors (DB cold start / transient network), try to approve to avoid hanging the payment UI.
+            # If something is wrong, we will reconcile later via getStarTransactions.
             try:
-                tg_api(
-                    "answerPreCheckoutQuery",
-                    {"pre_checkout_query_id": q.get("id"), "ok": False, "error_message": "Temporary error"},
-                )
+                tg_api_quick("answerPreCheckoutQuery", {"pre_checkout_query_id": q.get("id"), "ok": True}, timeout=4.0, retries=2)
             except Exception:
                 pass
         return {"ok": True}
@@ -985,6 +1065,33 @@ async def tg_webhook(request: Request):
 
 
 # ===== Admin API =====
+
+class WebhookSetupReq(BaseModel):
+    url: Optional[str] = None
+
+
+@app.get("/admin/webhook_info")
+def admin_webhook_info(request: Request):
+    require_admin(request)
+    return {"result": tg_api("getWebhookInfo", {})}
+
+
+@app.post("/admin/setup_webhook")
+def admin_setup_webhook(request: Request, req: WebhookSetupReq):
+    require_admin(request)
+    url = (req.url or "").strip() or _derive_webhook_url()
+    if not url:
+        raise HTTPException(status_code=400, detail="No webhook url (set WEBHOOK_URL or RENDER_EXTERNAL_URL)")
+    payload = {
+        "url": url,
+        "allowed_updates": ["message", "callback_query", "pre_checkout_query"],
+        "drop_pending_updates": False,
+    }
+    if TG_WEBHOOK_SECRET:
+        payload["secret_token"] = TG_WEBHOOK_SECRET
+    tg_api("setWebhook", payload)
+    return {"ok": True, "url": url}
+
 @app.get("/admin/stats")
 def admin_stats(request: Request):
     require_admin(request)
