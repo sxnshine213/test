@@ -153,23 +153,6 @@
     .inv-name { font-size: 12px; font-weight: 800; }
     .inv-sub { font-size: 11px; opacity: 0.75; }
 
-
-    .inv-actions {
-      margin-left: auto;
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-      align-items: stretch;
-    }
-    .inv-actions .inv-btn {
-      flex: 0 0 auto;
-      padding: 6px 10px;
-      border-radius: 10px;
-      font-size: 11px;
-      line-height: 1.1;
-      min-width: 86px;
-    }
-
     /* Bottom tabs */
     .bottom-nav {
       position: fixed;
@@ -338,7 +321,32 @@
   
     .recent-win__prize-icon{width:14px;height:14px;border-radius:3px;object-fit:cover;margin-right:6px;vertical-align:middle;}
 
-  </style>
+  
+    .case-hint{
+      margin-top:10px;
+      opacity:.85;
+      font-size:13px;
+    }
+    .inv-actions{
+      margin-top:8px;
+      display:flex;
+      gap:8px;
+    }
+    .btn-mini{
+      padding:8px 10px;
+      border-radius:12px;
+      border:1px solid rgba(255,255,255,.14);
+      background:rgba(255,255,255,.08);
+      color:#fff;
+      font-weight:700;
+      cursor:pointer;
+      font-size:13px;
+    }
+    .btn-mini:disabled{
+      opacity:.45;
+      cursor:not-allowed;
+    }
+</style>
 </head>
 
 <body>
@@ -360,10 +368,8 @@
       </div>
 
 
-      <div class="tabs">
-        <div class="pill active" data-cost="25">25 ⭐</div>
-        <div class="pill" data-cost="50">50 ⭐</div>
-      </div>
+      <div class="tabs" id="casesTabs"></div>
+      <div class="case-hint" id="caseHint"></div>
 
       <div class="roulette-wrap">
         <div class="roulette" id="roulette" data-initialized="false">
@@ -478,73 +484,6 @@
     const tabTop = document.getElementById('tabTop');
 
     const inventoryList = document.getElementById('inventoryList');
-    if (inventoryList) {
-      inventoryList.addEventListener('click', onInventoryAction);
-      inventoryList.addEventListener('touchend', onInventoryAction, { passive: false });
-    }
-
-    async function sellInventoryItem(invId, btnEl) {
-      if (!invId) return;
-      if (btnEl) btnEl.disabled = true;
-      try {
-        const res = await apiPost('/inventory/sell', {
-          initData: tg?.initData || '',
-          inventory_id: invId
-        });
-
-        if (balanceBadge && res && typeof res.balance === 'number') {
-          balanceBadge.textContent = `⭐ ${res.balance}`;
-        } else {
-          refreshBalance();
-        }
-
-    async function withdrawInventoryItem(invId, btnEl) {
-      if (!invId) return;
-      if (btnEl) btnEl.disabled = true;
-
-      try {
-        const res = await apiPost('/inventory/withdraw', {
-          initData: tg?.initData || '',
-          inventory_id: invId
-        });
-
-        // Refresh UI
-        await refreshBalance();
-        await refreshInventory();
-
-        const msg = (res && res.message) ? String(res.message) : '';
-        if (msg) alert(msg);
-      } catch (e) {
-        alert(e?.message || 'Ошибка вывода');
-      } finally {
-        if (btnEl) btnEl.disabled = false;
-      }
-    }
-
-
-        await refreshInventory();
-      } catch (e) {
-        alert('Ошибка: ' + (e?.message || e));
-      } finally {
-        if (btnEl) btnEl.disabled = false;
-      }
-    }
-
-    function onInventoryAction(e) {
-      const btn = e?.target?.closest ? e.target.closest('button[data-action][data-inv-id]') : null;
-      if (!btn) return;
-      try { e.preventDefault(); e.stopPropagation(); } catch (_) {}
-
-      const action = btn.getAttribute('data-action');
-      const invId = Number(btn.getAttribute('data-inv-id') || 0);
-
-      if (action === 'sell') {
-        await sellInventoryItem(invId, btn);
-      } else if (action === 'withdraw') {
-        await withdrawInventoryItem(invId, btn);
-      }
-    }
-
     const inventoryEmpty = document.getElementById('inventoryEmpty');
 
     const topList = document.getElementById('topList');
@@ -559,15 +498,72 @@
     const btnSell = document.getElementById('btnSell');
     const btnKeep = document.getElementById('btnKeep');
 
-    const pills = Array.from(document.querySelectorAll('.pill[data-cost]'));
-    let selectedCost = 25;
+    const casesTabs = document.getElementById('casesTabs');
+    const caseHint = document.getElementById('caseHint');
+    let selectedCaseId = null;
+    let selectedCase = null;
 
-    let pendingSpinId = null;
-    let pendingPrize = null;
+    function renderCases(items){
+      if (!casesTabs) return;
+      casesTabs.innerHTML = '';
+      (items || []).forEach((c, idx) => {
+        const el = document.createElement('div');
+        el.className = 'pill' + ((selectedCaseId && c.id === selectedCaseId) || (!selectedCaseId && idx === 0) ? ' active' : '');
+        el.dataset.caseId = String(c.id);
+        el.textContent = `${c.name} • ${c.price} ⭐`;
+        el.addEventListener('click', async () => {
+          Array.from(casesTabs.querySelectorAll('.pill')).forEach(x => x.classList.remove('active'));
+          el.classList.add('active');
+          selectedCaseId = c.id;
+          selectedCase = c;
+          try { tg?.HapticFeedback?.selectionChanged(); } catch (_) {}
+          await refreshCasePrizes();
+        });
+        casesTabs.appendChild(el);
+      });
+    }
 
-    pills.forEach(p => p.addEventListener('click', () => {
-      pills.forEach(x => x.classList.remove('active'));
-      p.classList.add('active');
+    async function refreshCases(){
+      try{
+        const res = await apiPost('/cases', { initData: tg?.initData || '' });
+        const items = Array.isArray(res?.items) ? res.items : [];
+        if (items.length){
+          if (!selectedCaseId) {
+            selectedCaseId = items[0].id;
+            selectedCase = items[0];
+          } else {
+            selectedCase = items.find(x => x.id === selectedCaseId) || items[0];
+            selectedCaseId = selectedCase.id;
+          }
+        }
+        renderCases(items);
+        await refreshCasePrizes();
+      }catch(e){
+        console.warn('refreshCases failed', e);
+      }
+    }
+
+    async function refreshCasePrizes(){
+      if (!selectedCaseId) return;
+      try{
+        const res = await apiPost(`/cases/${selectedCaseId}/prizes`, { initData: tg?.initData || '' });
+        const items = Array.isArray(res?.items) ? res.items : [];
+        setPrizes(items);
+        rebuildRouletteFromPrizes(items);
+        const caseInfo = res?.case || selectedCase;
+        if (caseHint){
+          const desc = (caseInfo && caseInfo.description) ? String(caseInfo.description) : '';
+          caseHint.textContent = desc ? desc : `Выбран кейс: ${(caseInfo?.name || '')} • ${caseInfo?.price ?? ''} ⭐`;
+        }
+        // update button label
+        if (btn && caseInfo && typeof caseInfo.price === 'number'){
+          btn.textContent = `Крутить • ${caseInfo.price} ⭐`;
+        }
+      }catch(e){
+        console.warn('refreshCasePrizes failed', e);
+      }
+    }
+p.classList.add('active');
       selectedCost = parseInt(p.dataset.cost, 10) || 25;
       try { tg?.HapticFeedback?.selectionChanged(); } catch (_) {}
     }));
@@ -629,15 +625,8 @@
     }
 
     async function refreshPrizes() {
-      try {
-        const res = await apiPost('/prizes', { initData: tg?.initData || '' });
-        const items = Array.isArray(res?.items) ? res.items : [];
-        setPrizes(items);
-        rebuildRouletteFromPrizes(items);
-      } catch (e) {
-        // keep fallback (hardcoded items) if backend endpoint not available
-        console.warn('refreshPrizes failed', e);
-      }
+      // kept for backward compatibility
+      return await refreshCases();
     }
 
     async function refreshBalance() {
@@ -768,19 +757,18 @@
           const img = (it && it.icon_url) ? String(it.icon_url).trim() : giftImageById(it.prize_id || it.id);
           const name = it.prize_name || it.name || 'Подарок';
           const cost = it.prize_cost ?? it.cost ?? '';
-          const locked = !!it.is_locked;
           const when = it.created_at ? new Date(it.created_at * 1000).toLocaleString() : '';
-          const invId = Number(it.inventory_id ?? it.inv_id ?? it.inventoryId ?? 0);
           return `
-            <div class="inv-card" data-inv-id="${invId}">
+            <div class="inv-card">
               <img src="${img}" alt="gift" />
               <div class="inv-meta">
                 <div class="inv-name">${name}</div>
                 <div class="inv-sub">⭐ ${cost} ${when ? '• ' + when : ''}</div>
-              </div>
-              <div class="inv-actions">
-                <button class="btn btn-sell inv-btn" data-action="sell" data-inv-id="${invId}" ${locked ? "disabled" : ""}>Продать</button>
-                <button class="btn btn-keep inv-btn" data-action="withdraw" data-inv-id="${invId}" ${locked ? "disabled" : ""}>Вывести</button>
+                <div class="inv-actions">
+                  <button class="btn-mini" data-act="sell" data-invid="${it.inventory_id || ''}" ${it.is_locked ? 'disabled' : ''}>Продать</button>
+                  <button class="btn-mini" data-act="withdraw" data-invid="${it.inventory_id || ''}" ${it.is_locked ? 'disabled' : ''}>Вывести</button>
+                </div>
+                ${it.is_locked ? `<div class="inv-sub" style="opacity:.7;margin-top:6px;">Заблокировано: ${it.locked_reason || '—'}</div>` : ``}
               </div>
             </div>
           `;
@@ -792,7 +780,40 @@
       }
     }
 
-    async function refreshLeaderboard() {
+    
+    if (inventoryList && !inventoryList.dataset.bound) {
+      inventoryList.dataset.bound = '1';
+      inventoryList.addEventListener('click', async (e) => {
+        const t = e.target;
+        const act = t?.dataset?.act;
+        const id = parseInt(t?.dataset?.invid || '', 10);
+        if (!act || !id) return;
+        t.disabled = true;
+        try{
+          if (act === 'sell'){
+            const res = await apiPost('/inventory/sell', { initData: tg?.initData || '', inventory_id: id });
+            if (balanceBadge && res && typeof res.balance === 'number') balanceBadge.textContent = `⭐ ${res.balance}`;
+            await refreshInventory();
+          } else if (act === 'withdraw'){
+            const res = await apiPost('/inventory/withdraw', { initData: tg?.initData || '', inventory_id: id });
+            await refreshInventory();
+            if (res?.status === 'sent') {
+              alert('Подарок отправлен.');
+            } else if (res?.status === 'claim_created') {
+              alert('Заявка на уникальный подарок создана. Администратор обработает её.');
+            } else if (res?.status === 'locked') {
+              alert('Этот подарок уже в обработке.');
+            }
+          }
+        }catch(err){
+          alert(String(err?.message || err));
+        }finally{
+          t.disabled = false;
+        }
+      });
+    }
+
+async function refreshLeaderboard() {
       if (!topList || !topMe) return;
 
       topMe.textContent = 'Загрузка...';
@@ -1150,7 +1171,7 @@
 
         btn.disabled = true;
         try {
-          const prize = await apiPost('/spin', { initData: tg?.initData || '', cost: selectedCost });
+          const prize = await apiPost('/spin', { initData: tg?.initData || '', case_id: selectedCaseId });
 
           if (balanceBadge && prize && typeof prize.balance === 'number') {
             balanceBadge.textContent = `⭐ ${prize.balance}`;

@@ -69,14 +69,14 @@
     <div class="row" style="margin-top:10px;">
       <input id="prizeName" placeholder="Название (например 💎 Алмаз)" style="min-width:220px;flex:2"/>
       <input id="prizeIconUrl" placeholder="Icon URL (https://.../icon.png)" style="min-width:260px;flex:3"/>
-      <input id="prizeGiftId" placeholder="gift_id (Telegram)" style="min-width:220px;flex:2"/>
+      <input id="prizeCost" placeholder="cost" style="width:120px"/>
+      <input id="prizeWeight" placeholder="weight" style="width:120px"/>
+      <input id="prizeSort" placeholder="sort" style="width:120px"/>
+      <input id="prizeGiftId" placeholder="gift_id (Telegram)" style="min-width:180px;flex:2"/>
       <label class="muted" style="display:flex;align-items:center;gap:8px;">
         <input id="prizeUnique" type="checkbox" style="width:auto;"/>
         unique
       </label>
-      <input id="prizeCost" placeholder="cost" style="width:120px"/>
-      <input id="prizeWeight" placeholder="weight" style="width:120px"/>
-      <input id="prizeSort" placeholder="sort" style="width:120px"/>
       <label class="muted" style="display:flex;align-items:center;gap:8px;">
         <input id="prizeActive" type="checkbox" checked style="width:auto;"/>
         active
@@ -88,15 +88,35 @@
     <div id="prizesBox"></div>
   </div>
 
-
-
-  
   <div class="card">
     <div class="row" style="justify-content:space-between;">
-      <div style="font-weight:900;">🧾 Заявки на уникальные подарки</div>
-      <div class="row">
-        <select id="claimsStatus" style="min-width:180px">
-          <option value="pending" selected>pending</option>
+      <div style="font-weight:900;">📦 Кейсы</div>
+      <button class="secondary" id="loadCases">Обновить</button>
+    </div>
+
+    <div class="row" style="margin-top:10px;">
+      <input id="caseName" placeholder="Название кейса" style="min-width:200px;flex:2"/>
+      <input id="caseDesc" placeholder="Описание" style="min-width:240px;flex:3"/>
+      <input id="casePrice" placeholder="price (⭐)" style="width:140px"/>
+      <input id="caseSort" placeholder="sort" style="width:120px"/>
+      <label class="muted" style="display:flex;align-items:center;gap:8px;">
+        <input id="caseActive" type="checkbox" checked style="width:auto;"/>
+        active
+      </label>
+      <button id="createCase">Создать</button>
+      <div id="casesStatus" class="muted"></div>
+    </div>
+
+    <div id="casesBox"></div>
+    <div id="casePrizesBox" style="margin-top:12px;"></div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="justify-content:space-between;">
+      <div style="font-weight:900;">🧾 Claims (уникальные подарки)</div>
+      <div class="row" style="gap:8px;">
+        <select id="claimsStatus" class="secondary" style="padding:8px 10px;border-radius:12px;">
+          <option value="pending">pending</option>
           <option value="approved">approved</option>
           <option value="rejected">rejected</option>
           <option value="fulfilled">fulfilled</option>
@@ -104,12 +124,13 @@
         <button class="secondary" id="loadClaims">Обновить</button>
       </div>
     </div>
-
-    <div id="claimsBox" class="muted"></div>
+    <div id="claimsBox"></div>
   </div>
 
 
-<div class="card">
+
+
+  <div class="card">
     <div class="row" style="justify-content:space-between;">
       <div style="font-weight:900;">💳 Topups</div>
       <button class="secondary" id="loadTopups">Обновить</button>
@@ -133,17 +154,15 @@
 
   const topupsBox = document.getElementById('topupsBox');
   const prizesBox = document.getElementById('prizesBox');
-  const claimsBox = document.getElementById('claimsBox');
-  const loadClaimsBtn = document.getElementById('loadClaims');
-  const claimsStatusEl = document.getElementById('claimsStatus');
   const prizesStatus = document.getElementById('prizesStatus');
   const prizeNameEl = document.getElementById('prizeName');
   const prizeIconUrlEl = document.getElementById('prizeIconUrl');
-  const prizeGiftIdEl = document.getElementById('prizeGiftId');
-  const prizeUniqueEl = document.getElementById('prizeUnique');
   const prizeCostEl = document.getElementById('prizeCost');
   const prizeWeightEl = document.getElementById('prizeWeight');
   const prizeSortEl = document.getElementById('prizeSort');
+
+  const prizeGiftIdEl = document.getElementById('prizeGiftId');
+  const prizeUniqueEl = document.getElementById('prizeUnique');
   const prizeActiveEl = document.getElementById('prizeActive');
 
 
@@ -330,16 +349,6 @@
     const tdIcon = document.createElement('td');
     const icon = document.createElement('input');
     icon.value = p.icon_url || '';
-
-    const giftId = document.createElement('input');
-    giftId.value = p.gift_id || '';
-    giftId.placeholder = 'gift_id';
-    giftId.style.minWidth = '180px';
-
-    const unique = document.createElement('input');
-    unique.type = 'checkbox';
-    unique.checked = !!p.is_unique;
-    unique.style.width = 'auto';
     icon.placeholder = 'https://...';
     icon.style.width = '260px';
     tdIcon.appendChild(icon);
@@ -355,6 +364,20 @@
     weight.value = String(p.weight ?? 0);
     weight.style.width = '90px';
     tdWeight.appendChild(weight);
+
+
+    const tdGiftId = document.createElement('td');
+    const giftId = document.createElement('input');
+    giftId.value = p.gift_id || '';
+    giftId.placeholder = 'gift_id';
+    giftId.style.width = '140px';
+    tdGiftId.appendChild(giftId);
+
+    const tdUnique = document.createElement('td');
+    const unique = document.createElement('input');
+    unique.type = 'checkbox';
+    unique.checked = !!p.is_unique;
+    tdUnique.appendChild(unique);
 
     const tdSort = document.createElement('td');
     const sort = document.createElement('input');
@@ -384,12 +407,12 @@
         const body = {
           name: name.value.trim(),
           icon_url: (icon.value || '').trim() || null,
+            gift_id: (giftId.value || '').trim() || null,
+            is_unique: !!unique.checked,
           cost: parseInt(cost.value, 10) || 0,
           weight: parseInt(weight.value, 10) || 0,
           is_active: !!active.checked,
-          sort_order: parseInt(sort.value, 10) || 0,
-          gift_id: (giftId.value || '').trim() || null,
-          is_unique: !!unique.checked
+          sort_order: parseInt(sort.value, 10) || 0
         };
         await api('/admin/prizes/' + encodeURIComponent(p.id), { method:'PUT', body: JSON.stringify(body) });
         prizesStatus.innerHTML = '<span class="ok">OK</span>';
@@ -417,8 +440,6 @@
     tr.appendChild(tdId);
     tr.appendChild(tdName);
     tr.appendChild(tdIcon);
-    tr.appendChild(tdGiftId);
-    tr.appendChild(tdUnique);
     tr.appendChild(tdCost);
     tr.appendChild(tdWeight);
     tr.appendChild(tdSort);
@@ -437,7 +458,7 @@
 
       const table = document.createElement('table');
       const thead = document.createElement('thead');
-      thead.innerHTML = '<tr><th>id</th><th>name</th><th>icon_url</th><th>cost</th><th>weight</th><th>sort</th><th>active</th><th>actions</th></tr>';
+      thead.innerHTML = '<tr><th>id</th><th>name</th><th>icon_url</th><th>cost</th><th>weight</th><th>gift_id</th><th>unique</th><th>sort</th><th>active</th><th>actions</th></tr>';
       table.appendChild(thead);
 
       const tbody = document.createElement('tbody');
@@ -480,11 +501,11 @@
       prizesStatus.innerHTML = '<span class="ok">OK</span>';
       if (prizeNameEl) prizeNameEl.value = '';
       if (prizeIconUrlEl) prizeIconUrlEl.value = '';
-      if (prizeGiftIdEl) prizeGiftIdEl.value = '';
-      if (prizeUniqueEl) prizeUniqueEl.checked = false;
       if (prizeCostEl) prizeCostEl.value = '';
       if (prizeWeightEl) prizeWeightEl.value = '';
       if (prizeSortEl) prizeSortEl.value = '';
+      if (prizeGiftIdEl) prizeGiftIdEl.value = '';
+      if (prizeUniqueEl) prizeUniqueEl.checked = false;
       if (prizeActiveEl) prizeActiveEl.checked = true;
       await loadPrizes();
     } catch (e) {
@@ -493,104 +514,7 @@
   }
 
 
-  
-  async function loadClaims() {
-    if (!claimsBox) return;
-    claimsBox.innerHTML = '<div class="muted">загрузка...</div>';
-    const st = (claimsStatusEl?.value || 'pending').trim();
-    try {
-      const d = await api('/admin/claims?status=' + encodeURIComponent(st) + '&limit=200');
-      const items = d.items || [];
-      if (!items.length) {
-        claimsBox.innerHTML = '<div class="muted">нет заявок</div>';
-        return;
-      }
-
-      const table = document.createElement('table');
-      const thead = document.createElement('thead');
-      thead.innerHTML = '<tr><th>time</th><th>claim_id</th><th>user</th><th>inventory_id</th><th>prize</th><th>⭐</th><th>status</th><th>note</th><th>actions</th></tr>';
-      table.appendChild(thead);
-
-      const tb = document.createElement('tbody');
-
-      for (const c of items) {
-        const tr = document.createElement('tr');
-
-        const tdTime = document.createElement('td'); tdTime.textContent = fmtTime(c.created_at);
-        const tdId = document.createElement('td'); tdId.textContent = String(c.id);
-        const tdUser = document.createElement('td'); tdUser.textContent = String(c.tg_user_id);
-        const tdInv = document.createElement('td'); tdInv.textContent = String(c.inventory_id);
-        const tdPrize = document.createElement('td'); tdPrize.textContent = `${c.prize_name} (#${c.prize_id})`;
-        const tdCost = document.createElement('td'); tdCost.textContent = String(c.prize_cost);
-        const tdStatus = document.createElement('td'); tdStatus.textContent = String(c.status);
-        const tdNote = document.createElement('td'); tdNote.textContent = c.note ? String(c.note) : '';
-
-        const tdActions = document.createElement('td');
-        tdActions.style.whiteSpace = 'nowrap';
-
-        const noteInput = document.createElement('input');
-        noteInput.placeholder = 'note...';
-        noteInput.value = c.note || '';
-        noteInput.style.minWidth = '180px';
-
-        const btnApprove = document.createElement('button');
-        btnApprove.className = 'secondary';
-        btnApprove.textContent = 'Approve';
-        btnApprove.onclick = async () => {
-          try {
-            await api('/admin/claims/' + encodeURIComponent(c.id) + '/approve', { method:'POST', body: JSON.stringify({ note: noteInput.value || null }) });
-            await loadClaims();
-          } catch (e) { alert(e.message); }
-        };
-
-        const btnReject = document.createElement('button');
-        btnReject.className = 'secondary';
-        btnReject.textContent = 'Reject';
-        btnReject.onclick = async () => {
-          if (!confirm('Reject claim #' + c.id + '?')) return;
-          try {
-            await api('/admin/claims/' + encodeURIComponent(c.id) + '/reject', { method:'POST', body: JSON.stringify({ note: noteInput.value || null }) });
-            await loadClaims();
-          } catch (e) { alert(e.message); }
-        };
-
-        const btnFulfill = document.createElement('button');
-        btnFulfill.textContent = 'Fulfill';
-        btnFulfill.onclick = async () => {
-          if (!confirm('Mark fulfilled claim #' + c.id + '? (inventory item will be removed)')) return;
-          try {
-            await api('/admin/claims/' + encodeURIComponent(c.id) + '/fulfill', { method:'POST', body: JSON.stringify({ note: noteInput.value || null }) });
-            await loadClaims();
-          } catch (e) { alert(e.message); }
-        };
-
-        tdActions.appendChild(noteInput);
-        tdActions.appendChild(btnApprove);
-        tdActions.appendChild(btnReject);
-        tdActions.appendChild(btnFulfill);
-
-        tr.appendChild(tdTime);
-        tr.appendChild(tdId);
-        tr.appendChild(tdUser);
-        tr.appendChild(tdInv);
-        tr.appendChild(tdPrize);
-        tr.appendChild(tdCost);
-        tr.appendChild(tdStatus);
-        tr.appendChild(tdNote);
-        tr.appendChild(tdActions);
-        tb.appendChild(tr);
-      }
-
-      table.appendChild(tb);
-      claimsBox.innerHTML = '';
-      claimsBox.appendChild(table);
-
-    } catch (e) {
-      claimsBox.innerHTML = `<span class="bad">ERR</span> • ${e.message}`;
-    }
-  }
-
-async function loadTopups() {
+  async function loadTopups() {
     topupsBox.innerHTML = '<div class="muted">загрузка...</div>';
     try {
       const d = await api('/admin/topups?limit=80');
@@ -620,6 +544,277 @@ async function loadTopups() {
 
   document.getElementById('loadPrizes')?.addEventListener('click', loadPrizes);
   document.getElementById('createPrize')?.addEventListener('click', createPrize);
+
+
+
+  // ===== Cases =====
+  const loadCasesBtn = document.getElementById('loadCases');
+  const createCaseBtn = document.getElementById('createCase');
+  const casesBox = document.getElementById('casesBox');
+  const casePrizesBox = document.getElementById('casePrizesBox');
+  const casesStatus = document.getElementById('casesStatus');
+  const caseNameEl = document.getElementById('caseName');
+  const caseDescEl = document.getElementById('caseDesc');
+  const casePriceEl = document.getElementById('casePrice');
+  const caseSortEl = document.getElementById('caseSort');
+  const caseActiveEl = document.getElementById('caseActive');
+
+  let lastCases = [];
+  let selectedCaseId = null;
+  let allPrizesCache = null;
+
+  async function loadCases(){
+    if (!casesBox) return;
+    casesStatus.textContent = 'загрузка...';
+    casesBox.innerHTML = '';
+    casePrizesBox.innerHTML = '';
+    try{
+      const d = await api('/admin/cases');
+      lastCases = d.items || [];
+      const table = document.createElement('table');
+      const thead = document.createElement('thead');
+      thead.innerHTML = '<tr><th>id</th><th>name</th><th>description</th><th>price</th><th>sort</th><th>active</th><th>actions</th></tr>';
+      table.appendChild(thead);
+
+      const tbody = document.createElement('tbody');
+      lastCases.forEach(c => {
+        const tr = document.createElement('tr');
+
+        const tdId = document.createElement('td'); tdId.textContent = String(c.id);
+
+        const tdName = document.createElement('td');
+        const name = document.createElement('input'); name.value = c.name || ''; name.style.width = '100%';
+        tdName.appendChild(name);
+
+        const tdDesc = document.createElement('td');
+        const desc = document.createElement('input'); desc.value = c.description || ''; desc.style.width = '100%';
+        tdDesc.appendChild(desc);
+
+        const tdPrice = document.createElement('td');
+        const price = document.createElement('input'); price.value = String(c.price ?? 0); price.style.width='110px';
+        tdPrice.appendChild(price);
+
+        const tdSort = document.createElement('td');
+        const sort = document.createElement('input'); sort.value = String(c.sort_order ?? 0); sort.style.width='90px';
+        tdSort.appendChild(sort);
+
+        const tdActive = document.createElement('td');
+        const active = document.createElement('input'); active.type='checkbox'; active.checked=!!c.is_active;
+        tdActive.appendChild(active);
+
+        const tdAct = document.createElement('td');
+        const btnSave = document.createElement('button'); btnSave.textContent='Сохранить';
+        btnSave.onclick = async () => {
+          await api(`/admin/cases/${c.id}`, {
+            method: 'PUT',
+            body: JSON.stringify({
+              name: name.value || '',
+              description: (desc.value || '').trim() || null,
+              price: parseInt(price.value || '0', 10) || 0,
+              is_active: !!active.checked,
+              sort_order: parseInt(sort.value || '0', 10) || 0,
+            })
+          });
+          await loadCases();
+        };
+
+        const btnManage = document.createElement('button'); btnManage.textContent='Призы';
+        btnManage.className='secondary';
+        btnManage.onclick = async () => {
+          selectedCaseId = c.id;
+          await openCasePrizes(c.id);
+        };
+
+        const btnDel = document.createElement('button'); btnDel.textContent='Удалить';
+        btnDel.className='secondary';
+        btnDel.onclick = async () => {
+          if (!confirm('Удалить кейс?')) return;
+          await api(`/admin/cases/${c.id}`, { method:'DELETE' });
+          await loadCases();
+        };
+
+        tdAct.appendChild(btnSave);
+        tdAct.appendChild(btnManage);
+        tdAct.appendChild(btnDel);
+
+        tr.appendChild(tdId);
+        tr.appendChild(tdName);
+        tr.appendChild(tdDesc);
+        tr.appendChild(tdPrice);
+        tr.appendChild(tdSort);
+        tr.appendChild(tdActive);
+        tr.appendChild(tdAct);
+
+        tbody.appendChild(tr);
+      });
+      table.appendChild(tbody);
+      casesBox.appendChild(table);
+      casesStatus.textContent = `ok: ${lastCases.length}`;
+    }catch(e){
+      casesStatus.textContent = 'ошибка: ' + (e?.message || e);
+    }
+  }
+
+  async function openCasePrizes(caseId){
+    if (!casePrizesBox) return;
+    casePrizesBox.innerHTML = '<div class="muted">загрузка призов кейса...</div>';
+
+    if (!allPrizesCache) {
+      const d = await api('/admin/prizes');
+      allPrizesCache = d.items || [];
+    }
+    const d2 = await api(`/admin/cases/${caseId}/prizes`);
+    const linked = new Map((d2.items || []).map(x => [x.prize_id, x]));
+
+    const wrap = document.createElement('div');
+    wrap.innerHTML = `<div style="font-weight:900;margin:8px 0;">Призы кейса #${caseId}</div>`;
+
+    const table = document.createElement('table');
+    const thead = document.createElement('thead');
+    thead.innerHTML = '<tr><th>use</th><th>prize_id</th><th>name</th><th>weight</th></tr>';
+    table.appendChild(thead);
+    const tbody = document.createElement('tbody');
+
+    const rows = [];
+    allPrizesCache.forEach(p => {
+      const tr = document.createElement('tr');
+      const tdUse = document.createElement('td');
+      const use = document.createElement('input'); use.type='checkbox'; use.checked = linked.has(p.id);
+      tdUse.appendChild(use);
+
+      const tdId = document.createElement('td'); tdId.textContent=String(p.id);
+      const tdName = document.createElement('td'); tdName.textContent=p.name || '';
+      const tdW = document.createElement('td');
+      const w = document.createElement('input');
+      w.value = String(linked.get(p.id)?.weight ?? p.weight ?? 0);
+      w.style.width='110px';
+      tdW.appendChild(w);
+
+      tr.appendChild(tdUse); tr.appendChild(tdId); tr.appendChild(tdName); tr.appendChild(tdW);
+      tbody.appendChild(tr);
+      rows.push({p, use, w});
+    });
+    table.appendChild(tbody);
+    wrap.appendChild(table);
+
+    const row = document.createElement('div');
+    row.className = 'row';
+    row.style.marginTop='10px';
+
+    const btnSave = document.createElement('button');
+    btnSave.textContent = 'Сохранить привязки';
+    btnSave.onclick = async () => {
+      const payload = rows.filter(r => r.use.checked).map(r => ({
+        prize_id: r.p.id,
+        weight: parseInt(r.w.value || '0', 10) || 0,
+        is_active: true
+      }));
+      await api(`/admin/cases/${caseId}/prizes`, { method:'POST', body: JSON.stringify(payload) });
+      alert('Сохранено.');
+      await openCasePrizes(caseId);
+    };
+
+    row.appendChild(btnSave);
+    wrap.appendChild(row);
+
+    casePrizesBox.innerHTML = '';
+    casePrizesBox.appendChild(wrap);
+  }
+
+  if (loadCasesBtn) loadCasesBtn.onclick = loadCases;
+  if (createCaseBtn) createCaseBtn.onclick = async () => {
+    const name = (caseNameEl?.value || '').trim();
+    const description = (caseDescEl?.value || '').trim();
+    const price = parseInt(casePriceEl?.value || '0', 10);
+    const sort = parseInt(caseSortEl?.value || '0', 10) || 0;
+    const is_active = !!(caseActiveEl && caseActiveEl.checked);
+
+    if (!name || !Number.isFinite(price) || price <= 0){
+      alert('Укажи name и корректный price.');
+      return;
+    }
+
+    casesStatus.textContent = 'создание...';
+    try{
+      await api('/admin/cases', {
+        method:'POST',
+        body: JSON.stringify({ name, description: description || null, price, is_active, sort_order: sort })
+      });
+      caseNameEl.value='';
+      caseDescEl.value='';
+      casePriceEl.value='';
+      caseSortEl.value='';
+      caseActiveEl.checked=true;
+      await loadCases();
+      casesStatus.textContent='ok';
+    }catch(e){
+      casesStatus.textContent = 'ошибка: ' + (e?.message || e);
+    }
+  };
+
+  // ===== Claims =====
+  const loadClaimsBtn = document.getElementById('loadClaims');
+  const claimsBox = document.getElementById('claimsBox');
+  const claimsStatusSel = document.getElementById('claimsStatus');
+
+  async function loadClaims(){
+    if (!claimsBox) return;
+    claimsBox.innerHTML = '<div class="muted">загрузка...</div>';
+    const status = (claimsStatusSel?.value || 'pending');
+    try{
+      const d = await api(`/admin/claims?status=${encodeURIComponent(status)}`);
+      const items = d.items || [];
+      if (!items.length){
+        claimsBox.innerHTML = '<div class="muted">Пусто.</div>';
+        return;
+      }
+      const table = document.createElement('table');
+      const thead = document.createElement('thead');
+      thead.innerHTML = '<tr><th>id</th><th>user</th><th>inventory_id</th><th>prize</th><th>status</th><th>created</th><th>actions</th></tr>';
+      table.appendChild(thead);
+
+      const tbody = document.createElement('tbody');
+      items.forEach(c => {
+        const tr = document.createElement('tr');
+        const tdId = document.createElement('td'); tdId.textContent=String(c.id);
+        const tdU = document.createElement('td'); tdU.textContent=String(c.tg_user_id);
+        const tdInv = document.createElement('td'); tdInv.textContent=String(c.inventory_id);
+        const tdP = document.createElement('td'); tdP.textContent=`${c.prize_name} (#${c.prize_id})`;
+        const tdS = document.createElement('td'); tdS.textContent=String(c.status);
+        const tdT = document.createElement('td'); tdT.textContent = c.created_at ? new Date(c.created_at*1000).toLocaleString() : '';
+        const tdA = document.createElement('td');
+
+        const mkBtn = (label, path) => {
+          const b = document.createElement('button');
+          b.textContent = label;
+          b.className = 'secondary';
+          b.onclick = async () => {
+            await api(path, { method:'POST' });
+            await loadClaims();
+          };
+          return b;
+        };
+
+        if (status === 'pending'){
+          tdA.appendChild(mkBtn('approve', `/admin/claims/${c.id}/approve`));
+          tdA.appendChild(mkBtn('reject', `/admin/claims/${c.id}/reject`));
+        }
+        if (status === 'approved'){
+          tdA.appendChild(mkBtn('fulfill', `/admin/claims/${c.id}/fulfill`));
+        }
+        tr.appendChild(tdId); tr.appendChild(tdU); tr.appendChild(tdInv); tr.appendChild(tdP); tr.appendChild(tdS); tr.appendChild(tdT); tr.appendChild(tdA);
+        tbody.appendChild(tr);
+      });
+      table.appendChild(tbody);
+      claimsBox.innerHTML = '';
+      claimsBox.appendChild(table);
+    }catch(e){
+      claimsBox.innerHTML = '<div class="muted">ошибка: ' + (e?.message || e) + '</div>';
+    }
+  }
+
+  if (loadClaimsBtn) loadClaimsBtn.onclick = loadClaims;
+  if (claimsStatusSel) claimsStatusSel.onchange = loadClaims;
 
 </script>
 </body>
