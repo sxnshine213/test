@@ -589,9 +589,14 @@ def prizes(req: MeReq):
 
     items = []
     for r in rows:
+        # r = (id, name, cost, icon_url)
         icon_url = (r[3] or "").strip() or None
-        items.append({"id": int(r[0]), "name": str(r[1]), "icon_url": ((r[2] or "").strip() or None),
-            "cost": int(r[3]), "icon_url": icon_url})
+        items.append({
+            "id": int(r[0]),
+            "name": str(r[1]),
+            "cost": int(r[2]),
+            "icon_url": icon_url,
+        })
     return {"items": items}
 
 
@@ -1360,7 +1365,7 @@ def admin_list_cases(request: Request):
         with con:
             with con.cursor() as cur:
                 cur.execute(
-                    "SELECT id, name, description, price, is_active, sort_order, created_at "
+                    "SELECT id, name, description, cover_url, price, is_active, sort_order, created_at "
                     "FROM cases ORDER BY sort_order ASC, id ASC"
                 )
                 rows = cur.fetchall()
@@ -1384,8 +1389,8 @@ def admin_create_case(request: Request, req: CaseIn):
         with con:
             with con.cursor() as cur:
                 cur.execute(
-                    "INSERT INTO cases (name, description, price, is_active, sort_order, created_at) "
-                    "VALUES (%s,%s,%s,%s,%s,%s) RETURNING id",
+                    "INSERT INTO cases (name, description, cover_url, price, is_active, sort_order, created_at) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING id",
                     (req.name, (req.description or None), (req.cover_url or None), int(req.price), bool(req.is_active), int(req.sort_order), now),
                 )
                 new_id = int(cur.fetchone()[0])
