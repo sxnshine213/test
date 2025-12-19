@@ -459,6 +459,13 @@
     const API_BASE = "https://test-u2mr.onrender.com"; // <-- поменяй на свой бекенд при необходимости
 
     const tg = window.Telegram?.WebApp;
+window.addEventListener('unhandledrejection', (ev) => {
+  console.warn('Unhandled rejection:', ev?.reason || ev);
+});
+window.addEventListener('error', (ev) => {
+  // keep it quiet, but log for debugging
+  console.warn('Global error:', ev?.message || ev);
+});
     try { tg?.ready(); } catch (_) {}
 
     const btn = document.getElementById('spinBtn');
@@ -502,6 +509,11 @@
     const caseHint = document.getElementById('caseHint');
     let selectedCaseId = null;
     let selectedCase = null;
+
+	    // Pending (open claim from previous spin)
+	    // These vars are referenced by the Spin button handler and by openClaim().
+	    let pendingSpinId = null;
+	    let pendingPrize = null;
 
     function renderCases(items){
       if (!casesTabs) return;
@@ -565,20 +577,35 @@
     }
 
     async function apiPost(path, payload) {
-      const res = await fetch(`${API_BASE}${path}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      if (!res.ok) {
-        const text = await res.text();
-        throw new Error(`HTTP ${res.status}: ${text}`);
-      }
-      const data = await res.json();
-      return data;
-    }
+  const url = `${API_BASE}${path}`;
+  let res;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload ?? {})
+    });
+  } catch (e) {
+    // Network error (DNS/CORS/mixed content/offline)
+    throw new Error(`NETWORK: ${e?.message || e} • ${url}`);
+  }
 
+  const text = await res.text();
 
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status}: ${text || '(empty)'} • ${url}`);
+  }
+
+  if (!text) return null;
+
+  try {
+    return JSON.parse(text);
+  } catch (e) {
+    // Often happens when API_BASE is wrong and we hit HTML, or backend returns non-JSON.
+    const snippet = text.slice(0, 220).replace(/\s+/g, ' ').trim();
+    throw new Error(`BAD_JSON: ${e?.message || e} • ${url} • body="${snippet}"`);
+  }
+}
     // ===== Prizes (icons from backend) =====
     let PRIZES_BY_ID = {};
 
@@ -592,35 +619,89 @@
     }
 
     function rebuildRouletteFromPrizes(items) {
-      if (!r) return;
-      const list = Array.isArray(items) ? items : [];
-      if (!list.length) return;
+  if (!r) return;
+  const list = Array.isArray(items) ? items : [];
+  if (!list.length) {
+    r.innerHTML = '';
+    r.dataset.initialized = 'false';
+    return;
+  }
 
-      // Reset infinite-scroll clone state
-      r.dataset.initialized = 'false';
-      r.innerHTML = '';
+  // Reset infinite-scroll clone state
+  r.dataset.initialized = 'false';
+  r.innerHTML = '';
 
-      for (const p of list) {
-        const item = document.createElement('div');
-        item.className = 'item';
-        item.dataset.id = String(p.id);
+  // CS2-like visual tape: common items appear more often, rare items less often.
+  const weights = list.map(p => Math.max(1, Number(p?.weight ?? 1)));
+  const totalW = weights.reduce((a, b) => a + b, 0);
 
-        const img = document.createElement('img');
-        img.src = (p.icon_url || '').trim() || giftImageById(p.id);
-        img.alt = 'prize';
-        img.referrerPolicy = 'no-referrer';
+  const baseSlots = Math.max(72, Math.min(120, list.length * 24));
+  const pool = [];
 
-        const price = document.createElement('div');
-        price.className = 'price';
-        price.textContent = `⭐ ${p.cost ?? ''}`;
+  // Deterministic proportional replication
+  for (let i = 0; i < list.length; i++) {
+    const p = list[i];
+    const w = weights[i];
+    let reps = Math.max(1, Math.round((w / totalW) * baseSlots));
+    for (let k = 0; k < reps; k++) pool.push(p);
+  }
 
-        item.appendChild(img);
-        item.appendChild(price);
-        r.appendChild(item);
+  // If rounding produced too few/too many slots, normalize to baseSlots
+  const pickWeighted = () => {
+    let x = Math.random() * totalW;
+    for (let i = 0; i < list.length; i++) {
+      x -= weights[i];
+      if (x <= 0) return list[i];
+    }
+    return list[list.length - 1];
+  };
+
+  while (pool.length < baseSlots) pool.push(pickWeighted());
+  while (pool.length > baseSlots) pool.pop();
+
+  // Shuffle (Fisher–Yates)
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
+
+  // Avoid long runs of the same prize id (visual nicety)
+  for (let i = 2; i < pool.length; i++) {
+    const a = pool[i - 2]?.id;
+    const b = pool[i - 1]?.id;
+    const c = pool[i]?.id;
+    if (a && b && c && a === b && b === c) {
+      // find a different one later and swap
+      for (let j = i + 1; j < Math.min(pool.length, i + 12); j++) {
+        if (pool[j]?.id !== c) { [pool[i], pool[j]] = [pool[j], pool[i]]; break; }
       }
     }
+  }
 
-    async function refreshPrizes() {
+  for (const p of pool) {
+    const item = document.createElement('div');
+    item.className = 'item';
+    item.dataset.id = String(p.id);
+
+    const img = document.createElement('img');
+    img.src = (p.icon_url || '').trim() || giftImageById(p.id);
+    img.alt = 'prize';
+    img.referrerPolicy = 'no-referrer';
+
+    const price = document.createElement('div');
+    price.className = 'price';
+    price.textContent = `⭐ ${p.cost ?? ''}`;
+
+    item.appendChild(img);
+    item.appendChild(price);
+    r.appendChild(item);
+  }
+
+  // Make sure the infinite tape is ready after rebuilding (case switch)
+  try { requestAnimationFrame(() => initInfiniteRoulette()); } catch (_) {}
+}
+
+async function refreshPrizes() {
       // kept for backward compatibility
       return await refreshCases();
     }
@@ -1185,14 +1266,19 @@ async function refreshLeaderboard() {
         }
       });
       (async () => {
-        await refreshPrizes();
-        initInfiniteRoulette();
-        refreshBalance();
-        refreshRecentWins();
-        setInterval(refreshRecentWins, 12000);
-        refreshInventory();
-        setTab('spin');
-      })();
+  try {
+    await refreshPrizes();
+    initInfiniteRoulette();
+    refreshBalance();
+    refreshRecentWins();
+    setInterval(refreshRecentWins, 12000);
+    refreshInventory();
+    setTab('spin');
+  } catch (e) {
+    console.warn('init failed', e);
+    try { alert('Ошибка инициализации: ' + (e?.message || e)); } catch (_) {}
+  }
+})();
     } else {
       console.warn('spinBtn или roulette не найдены');
     }
