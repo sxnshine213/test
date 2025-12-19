@@ -91,7 +91,39 @@
 
 
   
-  <div class="card">
+  
+
+<div class="card">
+  <div class="row" style="justify-content:space-between;">
+    <div style="font-weight:900;">📦 Кейсы</div>
+    <button class="secondary" id="loadCases">Обновить</button>
+  </div>
+
+  <div class="row" style="margin-top:10px;">
+    <input id="caseName" placeholder="Название кейса" style="min-width:220px;flex:2"/>
+    <input id="caseImageUrl" placeholder="Image URL (https://...)" style="min-width:260px;flex:3"/>
+    <input id="casePrice" placeholder="Цена (⭐)" style="width:140px"/>
+    <input id="caseSort" placeholder="sort" style="width:120px"/>
+    <label class="muted" style="display:flex;align-items:center;gap:8px;">
+      <input id="caseActive" type="checkbox" style="width:auto;" checked/>
+      active
+    </label>
+    <button id="createCase">Добавить</button>
+  </div>
+
+  <div id="casesStatus" class="muted" style="margin-top:10px;"></div>
+  <div id="casesBox"></div>
+
+  <div style="margin-top:14px;font-weight:900;">🎯 Призы в выбранном кейсе</div>
+  <div class="row" style="margin-top:10px;">
+    <select id="caseSelect" style="min-width:260px;flex:2"></select>
+    <button class="secondary" id="loadCasePrizes">Загрузить</button>
+    <button id="saveCasePrizes">Сохранить</button>
+  </div>
+  <div id="casePrizesBox"></div>
+</div>
+
+<div class="card">
     <div class="row" style="justify-content:space-between;">
       <div style="font-weight:900;">🧾 Заявки на уникальные подарки</div>
       <div class="row">
@@ -179,6 +211,14 @@
     if (!res.ok) throw new Error(`HTTP ${res.status}: ${typeof data === 'string' ? data : JSON.stringify(data)}`);
     return data;
   }
+
+
+function escapeHtml(s){
+  return String(s ?? '').replace(/[&<>"']/g, (m) => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  }[m]));
+}
+
 
   function statCard(title, value) {
     const div = document.createElement('div');
@@ -618,8 +658,198 @@ async function loadTopups() {
   loadStats();
   loadTopups();
 
+
+
+// ===== Cases =====
+async function loadCases() {
+  const box = document.getElementById('casesBox');
+  const sel = document.getElementById('caseSelect');
+  const st = document.getElementById('casesStatus');
+  if (st) st.textContent = 'Загрузка кейсов...';
+
+  const data = await api('/admin/cases');
+  const items = Array.isArray(data?.items) ? data.items : [];
+
+  if (st) st.textContent = `Кейсов: ${items.length}`;
+
+  if (sel) {
+    sel.innerHTML = '';
+    items.forEach(c => {
+      const opt = document.createElement('option');
+      opt.value = String(c.id);
+      opt.textContent = `#${c.id} • ${c.name} (⭐ ${c.price})`;
+      sel.appendChild(opt);
+    });
+  }
+
+  if (!box) return;
+  if (!items.length) { box.innerHTML = '<div class="muted" style="margin-top:10px;">Нет кейсов</div>'; return; }
+
+  const rows = items.map(c => `
+    <tr>
+      <td><span class="pill">#${c.id}</span></td>
+      <td><input data-cid="${c.id}" data-f="name" value="${escapeHtml(c.name||'')}" style="width:100%"/></td>
+      <td><input data-cid="${c.id}" data-f="image_url" value="${escapeHtml(c.image_url||'')}" style="width:100%"/></td>
+      <td><input data-cid="${c.id}" data-f="price" value="${Number(c.price||0)}" style="width:120px"/></td>
+      <td><input data-cid="${c.id}" data-f="sort_order" value="${Number(c.sort_order||0)}" style="width:120px"/></td>
+      <td>
+        <label class="muted" style="display:flex;align-items:center;gap:8px;">
+          <input type="checkbox" data-cid="${c.id}" data-f="is_active" ${c.is_active ? 'checked' : ''}/>
+          active
+        </label>
+      </td>
+      <td class="row" style="gap:8px;">
+        <button class="secondary" onclick="saveCase(${c.id})">Сохранить</button>
+        <button class="secondary" onclick="openCasePrizes(${c.id})">Призы</button>
+        <button onclick="deleteCase(${c.id})" style="background:#b94b4b;">Удалить</button>
+      </td>
+    </tr>
+  `).join('');
+
+  box.innerHTML = `
+    <table>
+      <thead>
+        <tr><th>ID</th><th>Название</th><th>Картинка</th><th>Цена</th><th>sort</th><th>active</th><th></th></tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
+}
+
+function readCaseRow(caseId) {
+  const qs = (f) => document.querySelector(`[data-cid="${caseId}"][data-f="${f}"]`);
+  const qscb = (f) => document.querySelector(`input[type="checkbox"][data-cid="${caseId}"][data-f="${f}"]`);
+  return {
+    name: qs('name')?.value || '',
+    image_url: qs('image_url')?.value || '',
+    price: Number(qs('price')?.value || 0),
+    sort_order: Number(qs('sort_order')?.value || 0),
+    is_active: !!qscb('is_active')?.checked,
+  };
+}
+
+async function saveCase(caseId) {
+  try {
+    const payload = readCaseRow(caseId);
+    await api(`/admin/cases/${caseId}`, { method:'PUT', body: JSON.stringify(payload) });
+    await loadCases();
+    alert('Сохранено');
+  } catch (e) { alert(e.message); }
+}
+
+async function deleteCase(caseId) {
+  if (!confirm('Удалить кейс #' + caseId + '?')) return;
+  try {
+    await api(`/admin/cases/${caseId}`, { method:'DELETE' });
+    await loadCases();
+  } catch (e) { alert(e.message); }
+}
+
+async function createCase() {
+  try {
+    const payload = {
+      name: document.getElementById('caseName')?.value || 'Новый кейс',
+      image_url: document.getElementById('caseImageUrl')?.value || null,
+      price: Number(document.getElementById('casePrice')?.value || 25),
+      sort_order: Number(document.getElementById('caseSort')?.value || 0),
+      is_active: !!document.getElementById('caseActive')?.checked,
+    };
+    await api('/admin/cases', { method:'POST', body: JSON.stringify(payload) });
+    document.getElementById('caseName').value = '';
+    document.getElementById('caseImageUrl').value = '';
+    document.getElementById('casePrice').value = '';
+    document.getElementById('caseSort').value = '';
+    await loadCases();
+  } catch (e) { alert(e.message); }
+}
+
+async function openCasePrizes(caseId) {
+  const sel = document.getElementById('caseSelect');
+  if (sel) sel.value = String(caseId);
+  await loadCasePrizes();
+}
+
+async function loadCasePrizes() {
+  const sel = document.getElementById('caseSelect');
+  const box = document.getElementById('casePrizesBox');
+  if (!sel || !box) return;
+
+  const caseId = Number(sel.value || 0);
+  if (!caseId) { box.innerHTML = '<div class="muted">Выбери кейс</div>'; return; }
+
+  const data = await api(`/admin/cases/${caseId}/prizes`);
+  const items = Array.isArray(data?.items) ? data.items : [];
+
+  const rows = items.map(p => `
+    <tr>
+      <td><span class="pill">#${p.prize_id}</span></td>
+      <td>${escapeHtml(p.name||'')}</td>
+      <td style="width:70px;">${p.icon_url ? `<img src="${escapeHtml(p.icon_url)}" style="width:48px;height:48px;border-radius:12px;border:1px solid #1f324a;object-fit:cover"/>` : '<span class="muted">—</span>'}</td>
+      <td>⭐ ${Number(p.cost||0)}</td>
+      <td><input data-pid="${p.prize_id}" data-f="weight" value="${Number(p.weight||0)}" style="width:120px"/></td>
+      <td><input data-pid="${p.prize_id}" data-f="sort_order" value="${Number(p.sort_order||0)}" style="width:120px"/></td>
+      <td>
+        <label class="muted" style="display:flex;align-items:center;gap:8px;">
+          <input type="checkbox" data-pid="${p.prize_id}" data-f="is_active" ${p.is_active ? 'checked' : ''}/>
+          active
+        </label>
+      </td>
+    </tr>
+  `).join('');
+
+  box.innerHTML = `
+    <table>
+      <thead>
+        <tr><th>Prize</th><th>Название</th><th>Icon</th><th>cost</th><th>weight</th><th>sort</th><th></th></tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <div class="muted" style="margin-top:8px;">Совет: weight=0 или active=false — приз не выпадает в этом кейсе.</div>
+  `;
+}
+
+function readCasePrizesFromTable() {
+  const box = document.getElementById('casePrizesBox');
+  if (!box) return [];
+  const rows = Array.from(box.querySelectorAll('tr'));
+  const out = [];
+  rows.forEach(tr => {
+    const w = tr.querySelector('input[data-f="weight"]');
+    if (!w) return;
+    const pid = Number(w.getAttribute('data-pid') || 0);
+    const sort = Number(tr.querySelector('input[data-f="sort_order"]')?.value || 0);
+    const active = !!tr.querySelector('input[type="checkbox"][data-f="is_active"]')?.checked;
+    out.push({ prize_id: pid, weight: Number(w.value || 0), is_active: active, sort_order: sort });
+  });
+  return out;
+}
+
+async function saveCasePrizes() {
+  const sel = document.getElementById('caseSelect');
+  if (!sel) return;
+  const caseId = Number(sel.value || 0);
+  if (!caseId) return;
+
+  try {
+    const items = readCasePrizesFromTable();
+    await api(`/admin/cases/${caseId}/prizes`, { method:'POST', body: JSON.stringify({ items }) });
+    alert('Сохранено');
+    await loadCasePrizes();
+  } catch (e) { alert(e.message); }
+}
+
   document.getElementById('loadPrizes')?.addEventListener('click', loadPrizes);
   document.getElementById('createPrize')?.addEventListener('click', createPrize);
+
+document.getElementById('loadCases')?.addEventListener('click', loadCases);
+document.getElementById('createCase')?.addEventListener('click', createCase);
+document.getElementById('loadCasePrizes')?.addEventListener('click', loadCasePrizes);
+document.getElementById('saveCasePrizes')?.addEventListener('click', saveCasePrizes);
+
+// preload cases as well
+loadCases();
+
+
 
 </script>
 </body>

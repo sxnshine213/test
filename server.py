@@ -120,8 +120,18 @@ class MeReq(WithInitData):
     pass
 
 
+class CasesReq(WithInitData):
+    pass
+
+
+class PrizesReq(WithInitData):
+    case_id: Optional[int] = None
+
+
+
 class SpinReq(WithInitData):
     cost: int = 25
+    case_id: Optional[int] = None
 
 
 class ClaimReq(WithInitData):
@@ -183,6 +193,30 @@ class PrizeOut(PrizeIn):
     id: int
     created_at: int
 
+class CaseIn(BaseModel):
+    name: str
+    image_url: Optional[str] = None
+    price: int
+    is_active: bool = True
+    sort_order: int = 0
+
+
+class CaseOut(CaseIn):
+    id: int
+    created_at: int
+
+
+class CasePrizeIn(BaseModel):
+    prize_id: int
+    weight: int
+    is_active: bool = True
+    sort_order: int = 0
+
+
+class CasePrizesReplaceReq(BaseModel):
+    items: list[CasePrizeIn]
+
+
 
 # ===== DB init =====
 def init_db():
@@ -229,6 +263,37 @@ def init_db():
                 )
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_prizes_active_sort ON prizes(is_active, sort_order, id)")
                 cur.execute("ALTER TABLE prizes ADD COLUMN IF NOT EXISTS icon_url TEXT")
+                # cases + mapping
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS cases (
+                      id BIGSERIAL PRIMARY KEY,
+                      name TEXT NOT NULL,
+                      image_url TEXT,
+                      price INTEGER NOT NULL,
+                      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                      sort_order INTEGER NOT NULL DEFAULT 0,
+                      created_at BIGINT NOT NULL
+                    )
+                    """
+                )
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_cases_active_sort ON cases(is_active, sort_order, id)")
+
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS case_prizes (
+                      case_id BIGINT NOT NULL REFERENCES cases(id) ON DELETE CASCADE,
+                      prize_id BIGINT NOT NULL REFERENCES prizes(id) ON DELETE CASCADE,
+                      weight INTEGER NOT NULL,
+                      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                      sort_order INTEGER NOT NULL DEFAULT 0,
+                      created_at BIGINT NOT NULL,
+                      PRIMARY KEY (case_id, prize_id)
+                    )
+                    """
+                )
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_case_prizes_case_active_sort ON case_prizes(case_id, is_active, sort_order, prize_id)")
+
 
                 # spins / inventory / topups
                 cur.execute(
@@ -265,6 +330,10 @@ def init_db():
                     )
                     """
                 )
+                # track case used for the spin (optional for older deployments)
+                cur.execute("ALTER TABLE spins ADD COLUMN IF NOT EXISTS case_id BIGINT")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_spins_case_time ON spins(case_id, created_at)")
+
                 cur.execute(
                     """
                     CREATE TABLE IF NOT EXISTS topups (
@@ -377,6 +446,33 @@ def init_db():
                                 False,
                             ),
                         )
+                # seed cases if empty (defaults for backward-compat)
+                cur.execute("SELECT COUNT(*) FROM cases")
+                cc = int(cur.fetchone()[0] or 0)
+                now = int(time.time())
+                if cc == 0:
+                    cur.execute(
+                        "INSERT INTO cases (id, name, image_url, price, is_active, sort_order, created_at) "
+                        "VALUES (1,'Кейс 25⭐',NULL,25,TRUE,0,%s) ON CONFLICT (id) DO NOTHING",
+                        (now,),
+                    )
+                    cur.execute(
+                        "INSERT INTO cases (id, name, image_url, price, is_active, sort_order, created_at) "
+                        "VALUES (2,'Кейс 50⭐',NULL,50,TRUE,1,%s) ON CONFLICT (id) DO NOTHING",
+                        (now,),
+                    )
+
+                # ensure mappings exist (for every case & prize)
+                cur.execute("SELECT id FROM cases")
+                case_ids = [int(r[0]) for r in cur.fetchall()]
+                for cid in case_ids:
+                    cur.execute(
+                        "INSERT INTO case_prizes (case_id, prize_id, weight, is_active, sort_order, created_at) "
+                        "SELECT %s, p.id, p.weight, p.is_active, p.sort_order, %s "
+                        "FROM prizes p "
+                        "ON CONFLICT (case_id, prize_id) DO NOTHING",
+                        (cid, now),
+                    )
 
 
 init_db()
@@ -704,14 +800,68 @@ def get_balance(cur, tg_user_id: str) -> int:
     return int(row[0]) if row and row[0] is not None else 0
 
 
-def fetch_active_prizes(cur) -> list[dict]:
+
+def fetch_active_cases(cur) -> list[dict]:
     cur.execute(
-        "SELECT id, name, icon_url, cost, weight FROM prizes "
-        "WHERE is_active = TRUE AND weight > 0 "
+        "SELECT id, name, image_url, price, is_active, sort_order, created_at "
+        "FROM cases "
+        "WHERE is_active = TRUE "
         "ORDER BY sort_order ASC, id ASC"
     )
     rows = cur.fetchall()
-    return [{"id": int(r[0]), "name": str(r[1]), "icon_url": (str(r[2]).strip() if r[2] is not None else None), "cost": int(r[3]), "weight": int(r[4])} for r in rows]
+    return [
+        {
+            "id": int(r[0]),
+            "name": str(r[1]),
+            "image_url": (str(r[2]).strip() if r[2] is not None and str(r[2]).strip() else None),
+            "price": int(r[3]),
+            "is_active": bool(r[4]),
+            "sort_order": int(r[5]),
+            "created_at": int(r[6] or 0),
+        }
+        for r in rows
+    ]
+
+
+def fetch_active_prizes(cur, case_id: Optional[int] = None) -> list[dict]:
+    if case_id is None:
+        cur.execute(
+            "SELECT id, name, icon_url, cost, weight FROM prizes "
+            "WHERE is_active = TRUE AND weight > 0 "
+            "ORDER BY sort_order ASC, id ASC"
+        )
+        rows = cur.fetchall()
+        return [
+            {
+                "id": int(r[0]),
+                "name": str(r[1]),
+                "icon_url": (str(r[2]).strip() if r[2] is not None and str(r[2]).strip() else None),
+                "cost": int(r[3]),
+                "weight": int(r[4]),
+            }
+            for r in rows
+        ]
+
+    cur.execute(
+        "SELECT p.id, p.name, p.icon_url, p.cost, cp.weight "
+        "FROM case_prizes cp "
+        "JOIN prizes p ON p.id = cp.prize_id "
+        "WHERE cp.case_id = %s AND cp.is_active = TRUE AND cp.weight > 0 AND p.is_active = TRUE "
+        "ORDER BY cp.sort_order ASC, p.sort_order ASC, p.id ASC",
+        (int(case_id),),
+    )
+    rows = cur.fetchall()
+    return [
+        {
+            "id": int(r[0]),
+            "name": str(r[1]),
+            "icon_url": (str(r[2]).strip() if r[2] is not None and str(r[2]).strip() else None),
+            "cost": int(r[3]),
+            "weight": int(r[4]),
+        }
+        for r in rows
+    ]
+
 
 
 # ===== Public API =====
@@ -781,38 +931,82 @@ def fairness_set_client_seed(req: FairnessSetClientSeedReq):
 
 
 
-@app.post("/prizes")
-def prizes(req: MeReq):
-    """
-    Public list of active prizes for the frontend (roulette icons, prices).
-    """
+
+
+@app.post("/cases")
+def cases(req: CasesReq):
+    """Public list of active cases for the frontend."""
     uid = extract_tg_user_id(req.initData)
     with pool.connection() as con:
         with con:
             with con.cursor() as cur:
                 public = extract_tg_user_public(req.initData)
                 get_or_create_user(cur, uid, public)
+                items = fetch_active_cases(cur)
+    return {"items": items}
 
-                # NOTE: order here is important to avoid mapping bugs
+
+
+@app.post("/prizes")
+def prizes(req: PrizesReq):
+    """
+    Public list of active prizes for the frontend (roulette icons, prices).
+
+    If case_id is provided, returns prizes configured for that case (case_prizes.weight).
+    """
+    uid = extract_tg_user_id(req.initData)
+    case_id = int(req.case_id) if req.case_id is not None else None
+
+    with pool.connection() as con:
+        with con:
+            with con.cursor() as cur:
+                public = extract_tg_user_public(req.initData)
+                get_or_create_user(cur, uid, public)
+
+                if case_id is None:
+                    cur.execute(
+                        "SELECT id, name, cost, icon_url "
+                        "FROM prizes WHERE is_active = TRUE AND weight > 0 "
+                        "ORDER BY sort_order ASC, id ASC"
+                    )
+                    rows = cur.fetchall()
+                    items = []
+                    for r in rows:
+                        items.append(
+                            {
+                                "id": int(r[0]),
+                                "name": str(r[1]),
+                                "cost": int(r[2]),
+                                "icon_url": (str(r[3]).strip() if r[3] is not None and str(r[3]).strip() else None),
+                            }
+                        )
+                    return {"items": items}
+
                 cur.execute(
-                    "SELECT id, name, cost, icon_url "
-                    "FROM prizes WHERE is_active = TRUE AND weight > 0 "
-                    "ORDER BY sort_order ASC, id ASC"
+                    "SELECT p.id, p.name, p.cost, p.icon_url, cp.weight "
+                    "FROM case_prizes cp "
+                    "JOIN prizes p ON p.id = cp.prize_id "
+                    "WHERE cp.case_id = %s AND cp.is_active = TRUE AND cp.weight > 0 AND p.is_active = TRUE "
+                    "ORDER BY cp.sort_order ASC, p.sort_order ASC, p.id ASC",
+                    (case_id,),
                 )
                 rows = cur.fetchall()
 
     items = []
     for r in rows:
-        # r = (id, name, cost, icon_url)
         items.append(
             {
                 "id": int(r[0]),
                 "name": str(r[1]),
                 "cost": int(r[2]),
                 "icon_url": (str(r[3]).strip() if r[3] is not None and str(r[3]).strip() else None),
+                "weight": int(r[4]),
             }
         )
     return {"items": items}
+
+
+
 
 @app.post("/inventory")
 def inventory(req: InventoryReq):
@@ -852,6 +1046,27 @@ def inventory_sell(request: Request, req: InventorySellReq):
                 public = extract_tg_user_public(req.initData)
                 get_or_create_user(cur, uid, public)
                 require_not_banned(cur, uid)
+
+                # resolve case -> authoritative bet cost
+                if case_id is not None:
+                    cur.execute("SELECT id, price FROM cases WHERE id=%s AND is_active=TRUE", (case_id,))
+                    row = cur.fetchone()
+                    if not row:
+                        raise HTTPException(status_code=404, detail="case not found")
+                    case_id = int(row[0])
+                    cost = int(row[1])
+                else:
+                    # backward-compat: map cost to a case by price if possible
+                    cur.execute(
+                        "SELECT id, price FROM cases WHERE price=%s AND is_active=TRUE ORDER BY sort_order ASC, id ASC LIMIT 1",
+                        (int(cost),),
+                    )
+                    row = cur.fetchone()
+                    if row:
+                        case_id = int(row[0])
+                        cost = int(row[1])
+                    else:
+                        raise HTTPException(status_code=400, detail="bad cost")
 
                 if idem_key:
                     _idem_advisory_lock(cur, uid, idem_key)
@@ -1078,9 +1293,8 @@ def inventory_withdraw(request: Request, req: InventoryWithdrawReq):
 @app.post("/spin")
 def spin(request: Request, req: SpinReq):
     uid = extract_tg_user_id(req.initData)
+    case_id = int(req.case_id) if req.case_id is not None else None
     cost = int(req.cost or 25)
-    if cost not in (25, 50):
-        raise HTTPException(status_code=400, detail="bad cost")
 
     idem_key = _get_idempotency_key(request)
     spin_id = str(uuid.uuid4())
@@ -1154,7 +1368,7 @@ def spin(request: Request, req: SpinReq):
                 rng_int = int.from_bytes(digest, "big")
                 rng_hex = digest.hex()
 
-                prizes = fetch_active_prizes(cur)
+                prizes = fetch_active_prizes(cur, case_id)
                 if not prizes:
                     prizes = [{"id": p["id"], "name": p["name"], "icon_url": (p.get("icon_url") or None), "cost": p["cost"], "weight": p["weight"]} for p in DEFAULT_PRIZES]
 
@@ -1187,12 +1401,13 @@ def spin(request: Request, req: SpinReq):
 
                 # persist spin + accounting
                 cur.execute(
-                    "INSERT INTO spins (spin_id, tg_user_id, bet_cost, prize_id, prize_name, prize_cost, status, created_at, "
+                    "INSERT INTO spins (spin_id, tg_user_id, case_id, bet_cost, prize_id, prize_name, prize_cost, status, created_at, "
                     "nonce, client_seed, server_seed, server_seed_hash, rng_hex) "
-                    "VALUES (%s,%s,%s,%s,%s,%s,'pending',%s,%s,%s,%s,%s,%s)",
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s,'pending',%s,%s,%s,%s,%s,%s)",
                     (
                         spin_id,
                         uid,
+                        (case_id if case_id is not None else None),
                         cost,
                         int(chosen["id"]),
                         str(chosen["name"]),
@@ -1209,6 +1424,8 @@ def spin(request: Request, req: SpinReq):
 
                 resp = {
                     "spin_id": spin_id,
+                    "case_id": case_id,
+                    "bet_cost": int(cost),
                     "id": int(chosen["id"]),
                     "name": str(chosen["name"]),
                     "icon_url": (chosen.get("icon_url") or None),
@@ -1959,6 +2176,16 @@ def admin_create_prize(request: Request, req: PrizeIn):
                     "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                     (new_id, req.name, (req.icon_url or None), int(req.cost), int(req.weight), bool(req.is_active), int(req.sort_order), now, (req.gift_id or None), bool(req.is_unique)),
                 )
+                # auto-map new prize into all existing cases (default: use prize weight/sort)
+                cur.execute("SELECT id FROM cases")
+                cids = [int(r[0]) for r in cur.fetchall()]
+                for cid in cids:
+                    cur.execute(
+                        "INSERT INTO case_prizes (case_id, prize_id, weight, is_active, sort_order, created_at) "
+                        "VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT (case_id, prize_id) DO NOTHING",
+                        (cid, new_id, int(req.weight), bool(req.is_active), int(req.sort_order or 0), now),
+                    )
+
     return {"id": new_id, "created_at": now, **req.model_dump()}
 
 
@@ -1991,6 +2218,168 @@ def admin_delete_prize(request: Request, prize_id: int):
                 if not row:
                     raise HTTPException(status_code=404, detail="prize not found")
     return {"ok": True, "deleted": int(prize_id)}
+
+# ===== Admin: Cases =====
+@app.get("/admin/cases")
+def admin_list_cases(request: Request):
+    require_admin(request)
+    with pool.connection() as con:
+        with con:
+            with con.cursor() as cur:
+                cur.execute(
+                    "SELECT id, name, image_url, price, is_active, sort_order, created_at "
+                    "FROM cases ORDER BY sort_order ASC, id ASC"
+                )
+                rows = cur.fetchall()
+    items = []
+    for r in rows:
+        items.append(
+            {
+                "id": int(r[0]),
+                "name": str(r[1]),
+                "image_url": (str(r[2]).strip() if r[2] is not None and str(r[2]).strip() else None),
+                "price": int(r[3]),
+                "is_active": bool(r[4]),
+                "sort_order": int(r[5]),
+                "created_at": int(r[6] or 0),
+            }
+        )
+    return {"items": items}
+
+
+@app.post("/admin/cases")
+def admin_create_case(request: Request, case: CaseIn):
+    require_admin(request)
+    with pool.connection() as con:
+        with con:
+            with con.cursor() as cur:
+                now = int(time.time())
+                cur.execute(
+                    "INSERT INTO cases (name, image_url, price, is_active, sort_order, created_at) "
+                    "VALUES (%s,%s,%s,%s,%s,%s) RETURNING id",
+                    (
+                        case.name,
+                        (case.image_url.strip() if case.image_url else None),
+                        int(case.price),
+                        bool(case.is_active),
+                        int(case.sort_order or 0),
+                        now,
+                    ),
+                )
+                cid = int(cur.fetchone()[0])
+
+                # auto-map all existing prizes with their default weights
+                cur.execute(
+                    "INSERT INTO case_prizes (case_id, prize_id, weight, is_active, sort_order, created_at) "
+                    "SELECT %s, p.id, p.weight, p.is_active, p.sort_order, %s FROM prizes p "
+                    "ON CONFLICT (case_id, prize_id) DO NOTHING",
+                    (cid, now),
+                )
+
+    return {"ok": True, "id": cid}
+
+
+@app.put("/admin/cases/{case_id}")
+def admin_update_case(request: Request, case_id: int, case: CaseIn):
+    require_admin(request)
+    with pool.connection() as con:
+        with con:
+            with con.cursor() as cur:
+                cur.execute(
+                    "UPDATE cases SET name=%s, image_url=%s, price=%s, is_active=%s, sort_order=%s "
+                    "WHERE id=%s RETURNING id",
+                    (
+                        case.name,
+                        (case.image_url.strip() if case.image_url else None),
+                        int(case.price),
+                        bool(case.is_active),
+                        int(case.sort_order or 0),
+                        int(case_id),
+                    ),
+                )
+                row = cur.fetchone()
+                if not row:
+                    raise HTTPException(status_code=404, detail="case not found")
+    return {"ok": True, "id": int(case_id)}
+
+
+@app.delete("/admin/cases/{case_id}")
+def admin_delete_case(request: Request, case_id: int):
+    require_admin(request)
+    with pool.connection() as con:
+        with con:
+            with con.cursor() as cur:
+                cur.execute("DELETE FROM cases WHERE id=%s RETURNING id", (int(case_id),))
+                row = cur.fetchone()
+                if not row:
+                    raise HTTPException(status_code=404, detail="case not found")
+    return {"ok": True, "deleted": int(case_id)}
+
+
+@app.get("/admin/cases/{case_id}/prizes")
+def admin_case_prizes(request: Request, case_id: int):
+    require_admin(request)
+    with pool.connection() as con:
+        with con:
+            with con.cursor() as cur:
+                cur.execute(
+                    "SELECT p.id, p.name, p.icon_url, p.cost, p.is_active, p.sort_order, "
+                    "COALESCE(cp.weight, 0) AS case_weight, COALESCE(cp.is_active, FALSE) AS case_active, "
+                    "COALESCE(cp.sort_order, p.sort_order) AS case_sort "
+                    "FROM prizes p "
+                    "LEFT JOIN case_prizes cp ON cp.prize_id=p.id AND cp.case_id=%s "
+                    "ORDER BY case_sort ASC, p.id ASC",
+                    (int(case_id),),
+                )
+                rows = cur.fetchall()
+    items = []
+    for r in rows:
+        items.append(
+            {
+                "prize_id": int(r[0]),
+                "name": str(r[1]),
+                "icon_url": (str(r[2]).strip() if r[2] is not None and str(r[2]).strip() else None),
+                "cost": int(r[3]),
+                "prize_active": bool(r[4]),
+                "prize_sort": int(r[5]),
+                "weight": int(r[6] or 0),
+                "is_active": bool(r[7]),
+                "sort_order": int(r[8] or 0),
+            }
+        )
+    return {"items": items}
+
+
+@app.post("/admin/cases/{case_id}/prizes")
+def admin_replace_case_prizes(request: Request, case_id: int, body: CasePrizesReplaceReq):
+    require_admin(request)
+    items = body.items or []
+    with pool.connection() as con:
+        with con:
+            with con.cursor() as cur:
+                cur.execute("SELECT id FROM cases WHERE id=%s", (int(case_id),))
+                if not cur.fetchone():
+                    raise HTTPException(status_code=404, detail="case not found")
+
+                now = int(time.time())
+                cur.execute("DELETE FROM case_prizes WHERE case_id=%s", (int(case_id),))
+                for it in items:
+                    cur.execute(
+                        "INSERT INTO case_prizes (case_id, prize_id, weight, is_active, sort_order, created_at) "
+                        "VALUES (%s,%s,%s,%s,%s,%s)",
+                        (
+                            int(case_id),
+                            int(it.prize_id),
+                            int(it.weight),
+                            bool(it.is_active),
+                            int(it.sort_order or 0),
+                            now,
+                        ),
+                    )
+    return {"ok": True}
+
+
+
 
 
 
