@@ -19,7 +19,13 @@
     .pill{display:inline-block;padding:4px 8px;border-radius:999px;background:#0b1320;border:1px solid #1f324a;font-size:12px}
     .ok{color:#7CFC90}
     .bad{color:#ff7b7b}
-  </style>
+      .prize-preview{width:34px;height:34px;border-radius:8px;object-fit:cover;background:rgba(255,255,255,.08)}
+    tr.dirty{box-shadow: inset 0 0 0 2px rgba(255,196,0,.35)}
+    .btn-xs{padding:8px 10px;border-radius:10px;font-weight:900;font-size:12px}
+    .btn-danger{background:#B64444}
+    td.mini{font-size:11px;opacity:.7;white-space:nowrap}
+    .prize-tools textarea{width:100%;min-height:160px;border-radius:12px;border:1px solid #1f324a;background:#0b1320;color:#fff;padding:10px 12px;resize:vertical}
+    </style>
 </head>
 <body>
 <div class="wrap">
@@ -64,6 +70,27 @@
     <div class="row" style="justify-content:space-between;">
       <div style="font-weight:900;">🎁 Призы</div>
       <button class="secondary" id="loadPrizes">Обновить</button>
+    </div>
+
+    <div class="row" style="margin-top:10px;">
+      <input id="prizeSearch" placeholder="Поиск по id / name / gift_id" style="min-width:220px;flex:2"/>
+      <label class="muted" style="display:flex;align-items:center;gap:8px;">
+        <input id="prizeShowInactive" type="checkbox" style="width:auto;"/>
+        показать inactive
+      </label>
+      <button class="secondary" id="saveAllPrizes" disabled>Сохранить всё</button>
+      <button class="secondary" id="exportPrizes">Экспорт JSON</button>
+      <button class="secondary" id="toggleImportPrizes">Импорт JSON</button>
+      <div id="prizesDirtyHint" class="muted"></div>
+    </div>
+
+    <div id="importPrizesWrap" class="card prize-tools" style="display:none;background:#0f1a2b;">
+      <div class="muted" style="margin-bottom:8px;">Вставь JSON массива призов. Если указан id и он существует — обновим, если id нет — создадим новый.</div>
+      <textarea id="importPrizesText"></textarea>
+      <div class="row" style="margin-top:10px;justify-content:flex-end;">
+        <button class="secondary" id="cancelImportPrizes">Отмена</button>
+        <button id="applyImportPrizes">Применить</button>
+      </div>
     </div>
 
     <div class="row" style="margin-top:10px;">
@@ -165,6 +192,22 @@
   const prizeUniqueEl = document.getElementById('prizeUnique');
   const prizeActiveEl = document.getElementById('prizeActive');
 
+  // Prize editor tools
+  const prizeSearchEl = document.getElementById('prizeSearch');
+  const prizeShowInactiveEl = document.getElementById('prizeShowInactive');
+  const saveAllPrizesBtn = document.getElementById('saveAllPrizes');
+  const exportPrizesBtn = document.getElementById('exportPrizes');
+  const toggleImportPrizesBtn = document.getElementById('toggleImportPrizes');
+  const importPrizesWrap = document.getElementById('importPrizesWrap');
+  const importPrizesText = document.getElementById('importPrizesText');
+  const applyImportPrizesBtn = document.getElementById('applyImportPrizes');
+  const cancelImportPrizesBtn = document.getElementById('cancelImportPrizes');
+  const prizesDirtyHint = document.getElementById('prizesDirtyHint');
+
+  const prizesDirty = new Set();
+  const prizesDirtyBodies = new Map();
+  let prizesCache = [];
+
 
   function loadCfg() {
     apiBaseEl.value = localStorage.getItem('admin_api_base') || 'https://test-u2mr.onrender.com';
@@ -182,9 +225,19 @@
   }
 
   async function api(path, opts={}) {
-    const base = apiBaseEl.value.trim().replace(/\/$/, '');
-    const key = adminKeyEl.value.trim();
-    const res = await fetch(base + path, {
+  let base = (apiBaseEl.value || '').trim();
+  if (!base) throw new Error('Не указан API base.');
+  if (!/^https?:\/\//i.test(base)) base = 'https://' + base;
+  base = base.replace(/\/$/, '');
+
+  if (location.protocol === 'https:' && /^http:\/\//i.test(base)) {
+    throw new Error('API base начинается с http:// — браузер заблокирует запрос (mixed content). Используй https://');
+  }
+
+  const key = adminKeyEl.value.trim();
+  let res;
+  try {
+    res = await fetch(base + path, {
       ...opts,
       headers: {
         'Content-Type': 'application/json',
@@ -192,12 +245,17 @@
         ...(opts.headers || {})
       }
     });
-    const text = await res.text();
-    let data = null;
-    try { data = text ? JSON.parse(text) : null; } catch (_) { data = text; }
-    if (!res.ok) throw new Error(`HTTP ${res.status}: ${typeof data === 'string' ? data : JSON.stringify(data)}`);
-    return data;
+  } catch (e) {
+    throw new Error(`Failed to fetch • base=${base} • ${e?.message || e}`);
   }
+
+  const text = await res.text();
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch (_) { data = text; }
+  if (!res.ok) throw new Error(`HTTP ${res.status}: ${typeof data === 'string' ? data : JSON.stringify(data)}`);
+  return data;
+}
+
 
   function statCard(title, value) {
     const div = document.createElement('div');
@@ -333,188 +391,383 @@
     }
   }
 
-
-  function prizeRow(p) {
-    const tr = document.createElement('tr');
-
-    const tdId = document.createElement('td');
-    tdId.textContent = String(p.id);
-
-    const tdName = document.createElement('td');
-    const name = document.createElement('input');
-    name.value = p.name || '';
-    name.style.width = '100%';
-    tdName.appendChild(name);
-
-    const tdIcon = document.createElement('td');
-    const icon = document.createElement('input');
-    icon.value = p.icon_url || '';
-    icon.placeholder = 'https://...';
-    icon.style.width = '260px';
-    tdIcon.appendChild(icon);
-
-    const tdCost = document.createElement('td');
-    const cost = document.createElement('input');
-    cost.value = String(p.cost ?? 0);
-    cost.style.width = '90px';
-    tdCost.appendChild(cost);
-
-    const tdWeight = document.createElement('td');
-    const weight = document.createElement('input');
-    weight.value = String(p.weight ?? 0);
-    weight.style.width = '90px';
-    tdWeight.appendChild(weight);
-
-
-    const tdGiftId = document.createElement('td');
-    const giftId = document.createElement('input');
-    giftId.value = p.gift_id || '';
-    giftId.placeholder = 'gift_id';
-    giftId.style.width = '140px';
-    tdGiftId.appendChild(giftId);
-
-    const tdUnique = document.createElement('td');
-    const unique = document.createElement('input');
-    unique.type = 'checkbox';
-    unique.checked = !!p.is_unique;
-    tdUnique.appendChild(unique);
-
-    const tdSort = document.createElement('td');
-    const sort = document.createElement('input');
-    sort.value = String(p.sort_order ?? 0);
-    sort.style.width = '90px';
-    tdSort.appendChild(sort);
-
-    const tdActive = document.createElement('td');
-    const active = document.createElement('input');
-    active.type = 'checkbox';
-    active.checked = !!p.is_active;
-    tdActive.appendChild(active);
-
-    const tdActions = document.createElement('td');
-    const btnSave = document.createElement('button');
-    btnSave.textContent = 'Сохранить';
-    btnSave.className = 'secondary';
-    btnSave.style.marginRight = '8px';
-
-    const btnDel = document.createElement('button');
-    btnDel.textContent = 'Удалить';
-    btnDel.style.background = '#B64444';
-
-    btnSave.onclick = async () => {
-      prizesStatus.textContent = 'сохранение...';
-      try {
-        const body = {
-          name: name.value.trim(),
-          icon_url: (icon.value || '').trim() || null,
-            gift_id: (giftId.value || '').trim() || null,
-            is_unique: !!unique.checked,
-          cost: parseInt(cost.value, 10) || 0,
-          weight: parseInt(weight.value, 10) || 0,
-          is_active: !!active.checked,
-          sort_order: parseInt(sort.value, 10) || 0
-        };
-        await api('/admin/prizes/' + encodeURIComponent(p.id), { method:'PUT', body: JSON.stringify(body) });
-        prizesStatus.innerHTML = '<span class="ok">OK</span>';
-        await loadPrizes();
-      } catch (e) {
-        prizesStatus.innerHTML = `<span class="bad">ERR</span> • ${e.message}`;
-      }
-    };
-
-    btnDel.onclick = async () => {
-      if (!confirm('Удалить приз #' + p.id + '?')) return;
-      prizesStatus.textContent = 'удаление...';
-      try {
-        await api('/admin/prizes/' + encodeURIComponent(p.id), { method:'DELETE' });
-        prizesStatus.innerHTML = '<span class="ok">OK</span>';
-        await loadPrizes();
-      } catch (e) {
-        prizesStatus.innerHTML = `<span class="bad">ERR</span> • ${e.message}`;
-      }
-    };
-
-    tdActions.appendChild(btnSave);
-    tdActions.appendChild(btnDel);
-
-    tr.appendChild(tdId);
-    tr.appendChild(tdName);
-    tr.appendChild(tdIcon);
-    tr.appendChild(tdCost);
-    tr.appendChild(tdWeight);
-    tr.appendChild(tdSort);
-    tr.appendChild(tdActive);
-    tr.appendChild(tdActions);
-    return tr;
+  // ===== Prizes =====
+  function markPrizeDirty(id, tr, body) {
+    const pid = Number(id);
+    prizesDirty.add(pid);
+    if (body) prizesDirtyBodies.set(pid, body);
+    if (tr) tr.classList.add('dirty');
+    if (saveAllPrizesBtn) saveAllPrizesBtn.disabled = prizesDirty.size === 0;
+    if (prizesDirtyHint) prizesDirtyHint.textContent = prizesDirty.size ? (`изменено: ${prizesDirty.size}`) : '';
   }
 
-  async function loadPrizes() {
-    if (!prizesBox) return;
-    prizesStatus.textContent = 'загрузка...';
-    prizesBox.innerHTML = '';
-    try {
-      const d = await api('/admin/prizes');
-      const items = d.items || [];
-
-      const table = document.createElement('table');
-      const thead = document.createElement('thead');
-      thead.innerHTML = '<tr><th>id</th><th>name</th><th>icon_url</th><th>cost</th><th>weight</th><th>gift_id</th><th>unique</th><th>sort</th><th>active</th><th>actions</th></tr>';
-      table.appendChild(thead);
-
-      const tbody = document.createElement('tbody');
-      items.forEach(p => tbody.appendChild(prizeRow(p)));
-      table.appendChild(tbody);
-
-      prizesBox.appendChild(table);
-      prizesStatus.innerHTML = `<span class="ok">OK</span> • ${items.length}`;
-    } catch (e) {
-      prizesStatus.innerHTML = `<span class="bad">ERR</span> • ${e.message}`;
-    }
+  function clearPrizeDirty(id, tr) {
+    const pid = Number(id);
+    prizesDirty.delete(pid);
+    prizesDirtyBodies.delete(pid);
+    if (tr) tr.classList.remove('dirty');
+    if (saveAllPrizesBtn) saveAllPrizesBtn.disabled = prizesDirty.size === 0;
+    if (prizesDirtyHint) prizesDirtyHint.textContent = prizesDirty.size ? (`изменено: ${prizesDirty.size}`) : '';
   }
 
-  async function createPrize() {
-    const name = (prizeNameEl?.value || '').trim();
-    const cost = parseInt((prizeCostEl?.value || '').trim(), 10);
-    const weight = parseInt((prizeWeightEl?.value || '').trim(), 10);
-    const sort = parseInt((prizeSortEl?.value || '').trim(), 10);
-    const is_active = !!prizeActiveEl?.checked;
-    const icon_url = (prizeIconUrlEl?.value || '').trim() || null;
+  function prizeMatches(p, q) {
+    if (!q) return true;
+    const s = (v) => (v == null ? '' : String(v)).toLowerCase();
+    const qq = q.toLowerCase();
+    return s(p.id).includes(qq) || s(p.name).includes(qq) || s(p.gift_id).includes(qq);
+  }
 
-    if (!name || !Number.isFinite(cost) || !Number.isFinite(weight)) {
-      alert('Укажи name, cost и weight.');
-      return;
-    }
+  // ===== Prizes (editor) =====
+function _lc(s){ return String(s ?? '').toLowerCase(); }
 
-    prizesStatus.textContent = 'создание...';
+function updateDirtyHint(){
+  const n = prizesDirty.size;
+  saveAllPrizesBtn.disabled = n === 0;
+  prizesDirtyHint.textContent = n ? `изменено: ${n}` : '';
+}
+
+function markPrizeDirty(prizeId, body, tr){
+  prizesDirty.add(prizeId);
+  prizesDirtyBodies.set(prizeId, body);
+  tr.classList.add('dirty');
+  updateDirtyHint();
+}
+
+function clearPrizeDirty(prizeId){
+  prizesDirty.delete(prizeId);
+  prizesDirtyBodies.delete(prizeId);
+  updateDirtyHint();
+}
+
+function makeIconPreview(url){
+  const img = document.createElement('img');
+  img.className = 'prize-preview';
+  img.alt = '';
+  img.referrerPolicy = 'no-referrer';
+  if (url) img.src = url;
+  img.onerror = () => { img.removeAttribute('src'); };
+  return img;
+}
+
+function prizeRow(p) {
+  const tr = document.createElement('tr');
+
+  const tdId = document.createElement('td');
+  tdId.textContent = String(p.id);
+
+  const tdPrev = document.createElement('td');
+  const prev = makeIconPreview(p.icon_url);
+  tdPrev.appendChild(prev);
+
+  const tdName = document.createElement('td');
+  const name = document.createElement('input');
+  name.value = p.name || '';
+  name.style.width = '100%';
+  tdName.appendChild(name);
+
+  const tdIcon = document.createElement('td');
+  const icon = document.createElement('input');
+  icon.value = p.icon_url || '';
+  icon.placeholder = 'https://...';
+  icon.style.width = '260px';
+  tdIcon.appendChild(icon);
+
+  const tdCost = document.createElement('td');
+  const cost = document.createElement('input');
+  cost.type = 'number';
+  cost.value = String(p.cost ?? 0);
+  cost.style.width = '90px';
+  tdCost.appendChild(cost);
+
+  const tdWeight = document.createElement('td');
+  const weight = document.createElement('input');
+  weight.type = 'number';
+  weight.value = String(p.weight ?? 0);
+  weight.style.width = '90px';
+  tdWeight.appendChild(weight);
+
+  const tdGiftId = document.createElement('td');
+  const giftId = document.createElement('input');
+  giftId.value = p.gift_id || '';
+  giftId.placeholder = 'gift_id';
+  giftId.style.width = '150px';
+  tdGiftId.appendChild(giftId);
+
+  const tdUnique = document.createElement('td');
+  const unique = document.createElement('input');
+  unique.type = 'checkbox';
+  unique.checked = !!p.is_unique;
+  tdUnique.appendChild(unique);
+
+  const tdSort = document.createElement('td');
+  const sort = document.createElement('input');
+  sort.type = 'number';
+  sort.value = String(p.sort_order ?? 0);
+  sort.style.width = '90px';
+  tdSort.appendChild(sort);
+
+  const tdActive = document.createElement('td');
+  const active = document.createElement('input');
+  active.type = 'checkbox';
+  active.checked = !!p.is_active;
+  tdActive.appendChild(active);
+
+  const tdCreated = document.createElement('td');
+  tdCreated.className = 'mini';
+  tdCreated.textContent = p.created_at ? fmtTime(p.created_at) : '';
+
+  const tdActions = document.createElement('td');
+  const btnSave = document.createElement('button');
+  btnSave.textContent = 'Сохранить';
+  btnSave.className = 'secondary btn-xs';
+  btnSave.style.marginRight = '8px';
+
+  const btnDel = document.createElement('button');
+  btnDel.textContent = 'Удалить';
+  btnDel.className = 'btn-danger btn-xs';
+
+  const collectBody = () => ({
+    name: (name.value || '').trim(),
+    icon_url: (icon.value || '').trim() || null,
+    cost: parseInt(cost.value, 10) || 0,
+    weight: parseInt(weight.value, 10) || 0,
+    gift_id: (giftId.value || '').trim() || null,
+    is_unique: !!unique.checked,
+    is_active: !!active.checked,
+    sort_order: parseInt(sort.value, 10) || 0
+  });
+
+  const onChange = () => {
+    const body = collectBody();
+    const u = (body.icon_url || '').trim();
+    if (u) prev.src = u; else prev.removeAttribute('src');
+    markPrizeDirty(p.id, body, tr);
+  };
+
+  [name, icon, cost, weight, giftId, sort].forEach(el => el.addEventListener('input', onChange));
+  [unique, active].forEach(el => el.addEventListener('change', onChange));
+
+  btnSave.onclick = async () => {
+    prizesStatus.textContent = 'сохранение...';
     try {
-      await api('/admin/prizes', {
-        method: 'POST',
-        body: JSON.stringify({
-          name,
-          cost,
-          weight,
-          is_active,
-          sort_order: Number.isFinite(sort) ? sort : 0,
-          icon_url
-        })
-      });
+      const body = collectBody();
+      if (!body.name) throw new Error('name пустой');
+      await api('/admin/prizes/' + encodeURIComponent(p.id), { method:'PUT', body: JSON.stringify(body) });
       prizesStatus.innerHTML = '<span class="ok">OK</span>';
-      if (prizeNameEl) prizeNameEl.value = '';
-      if (prizeIconUrlEl) prizeIconUrlEl.value = '';
-      if (prizeCostEl) prizeCostEl.value = '';
-      if (prizeWeightEl) prizeWeightEl.value = '';
-      if (prizeSortEl) prizeSortEl.value = '';
-      if (prizeGiftIdEl) prizeGiftIdEl.value = '';
-      if (prizeUniqueEl) prizeUniqueEl.checked = false;
-      if (prizeActiveEl) prizeActiveEl.checked = true;
+      clearPrizeDirty(p.id);
       await loadPrizes();
     } catch (e) {
       prizesStatus.innerHTML = `<span class="bad">ERR</span> • ${e.message}`;
     }
+  };
+
+  btnDel.onclick = async () => {
+    if (!confirm('Удалить приз #' + p.id + '?')) return;
+    prizesStatus.textContent = 'удаление...';
+    try {
+      await api('/admin/prizes/' + encodeURIComponent(p.id), { method:'DELETE' });
+      prizesStatus.innerHTML = '<span class="ok">OK</span>';
+      clearPrizeDirty(p.id);
+      await loadPrizes();
+    } catch (e) {
+      prizesStatus.innerHTML = `<span class="bad">ERR</span> • ${e.message}`;
+    }
+  };
+
+  tdActions.appendChild(btnSave);
+  tdActions.appendChild(btnDel);
+
+  tr.appendChild(tdId);
+  tr.appendChild(tdPrev);
+  tr.appendChild(tdName);
+  tr.appendChild(tdIcon);
+  tr.appendChild(tdCost);
+  tr.appendChild(tdWeight);
+  tr.appendChild(tdGiftId);
+  tr.appendChild(tdUnique);
+  tr.appendChild(tdSort);
+  tr.appendChild(tdActive);
+  tr.appendChild(tdCreated);
+  tr.appendChild(tdActions);
+
+  return tr;
+}
+
+function renderPrizes(){
+  if (!prizesBox) return;
+  prizesBox.innerHTML = '';
+
+  const q = _lc(prizeSearchEl?.value || '');
+  const showInactive = !!prizeShowInactiveEl?.checked;
+
+  const items = (prizesCache || []).filter(p => {
+    if (!showInactive && !p.is_active) return false;
+    if (!q) return true;
+    const id = String(p.id);
+    return id.includes(q) || _lc(p.name).includes(q) || _lc(p.gift_id).includes(q);
+  });
+
+  const table = document.createElement('table');
+  const thead = document.createElement('thead');
+  thead.innerHTML = '<tr><th>id</th><th></th><th>name</th><th>icon_url</th><th>cost</th><th>weight</th><th>gift_id</th><th>unique</th><th>sort</th><th>active</th><th>created</th><th>actions</th></tr>';
+  table.appendChild(thead);
+
+  const tbody = document.createElement('tbody');
+  items.forEach(p => tbody.appendChild(prizeRow(p)));
+  table.appendChild(tbody);
+
+  prizesBox.appendChild(table);
+
+  prizesStatus.innerHTML = `<span class="ok">OK</span> • ${items.length}${items.length !== (prizesCache||[]).length ? ` / ${ (prizesCache||[]).length }` : ''}`;
+  updateDirtyHint();
+}
+
+async function loadPrizes() {
+  if (!prizesBox) return;
+  prizesStatus.textContent = 'загрузка...';
+  prizesBox.innerHTML = '';
+  try {
+    const d = await api('/admin/prizes');
+    prizesCache = d.items || [];
+    prizesDirty.clear();
+    prizesDirtyBodies.clear();
+    renderPrizes();
+  } catch (e) {
+    prizesStatus.innerHTML = `<span class="bad">ERR</span> • ${e.message}`;
+  }
+}
+
+async function createPrize() {
+  const name = (prizeNameEl?.value || '').trim();
+  const cost = parseInt((prizeCostEl?.value || '').trim(), 10);
+  const weight = parseInt((prizeWeightEl?.value || '').trim(), 10);
+  const sort = parseInt((prizeSortEl?.value || '').trim(), 10);
+  const is_active = !!prizeActiveEl?.checked;
+  const icon_url = (prizeIconUrlEl?.value || '').trim() || null;
+
+  const gift_id = (prizeGiftIdEl?.value || '').trim() || null;
+  const is_unique = !!prizeUniqueEl?.checked;
+
+  if (!name || !Number.isFinite(cost) || !Number.isFinite(weight)) {
+    alert('Укажи name, cost и weight.');
+    return;
   }
 
+  prizesStatus.textContent = 'создание...';
+  try {
+    await api('/admin/prizes', {
+      method: 'POST',
+      body: JSON.stringify({
+        name,
+        cost,
+        weight,
+        gift_id,
+        is_unique,
+        is_active,
+        sort_order: Number.isFinite(sort) ? sort : 0,
+        icon_url
+      })
+    });
+    prizesStatus.innerHTML = '<span class="ok">OK</span>';
+    if (prizeNameEl) prizeNameEl.value = '';
+    if (prizeIconUrlEl) prizeIconUrlEl.value = '';
+    if (prizeCostEl) prizeCostEl.value = '';
+    if (prizeWeightEl) prizeWeightEl.value = '';
+    if (prizeSortEl) prizeSortEl.value = '';
+    if (prizeGiftIdEl) prizeGiftIdEl.value = '';
+    if (prizeUniqueEl) prizeUniqueEl.checked = false;
+    if (prizeActiveEl) prizeActiveEl.checked = true;
+    await loadPrizes();
+  } catch (e) {
+    prizesStatus.innerHTML = `<span class="bad">ERR</span> • ${e.message}`;
+  }
+}
 
-  async function loadTopups() {
+async function saveAllPrizes(){
+  if (!prizesDirtyBodies.size) return;
+  prizesStatus.textContent = `сохранение (${prizesDirtyBodies.size})...`;
+  try {
+    for (const [id, body] of prizesDirtyBodies.entries()){
+      if (!body.name) throw new Error(`prize #${id}: пустой name`);
+      await api('/admin/prizes/' + encodeURIComponent(id), { method:'PUT', body: JSON.stringify(body) });
+    }
+    prizesStatus.innerHTML = '<span class="ok">OK</span> • сохранено';
+    prizesDirty.clear();
+    prizesDirtyBodies.clear();
+    updateDirtyHint();
+    await loadPrizes();
+  } catch (e) {
+    prizesStatus.innerHTML = `<span class="bad">ERR</span> • ${e.message}`;
+  }
+}
+
+function exportPrizes(){
+  const payload = JSON.stringify(prizesCache || [], null, 2);
+  const blob = new Blob([payload], {type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `prizes_${new Date().toISOString().slice(0,10)}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2500);
+}
+
+function toggleImportPrizes(){
+  importPrizesWrap.style.display = (importPrizesWrap.style.display === 'none' || !importPrizesWrap.style.display) ? 'block' : 'none';
+}
+
+async function applyImportPrizes(){
+  let arr;
+  try { arr = JSON.parse(importPrizesText.value || '[]'); }
+  catch (e) { alert('JSON не парсится: ' + e.message); return; }
+
+  if (!Array.isArray(arr)) { alert('Нужен JSON массива.'); return; }
+
+  prizesStatus.textContent = `импорт (${arr.length})...`;
+  const byId = new Map((prizesCache||[]).map(x => [x.id, x]));
+  try {
+    for (const it of arr){
+      const body = {
+        name: String(it.name ?? '').trim(),
+        icon_url: (String(it.icon_url ?? '')).trim() || null,
+        cost: parseInt(it.cost ?? 0, 10) || 0,
+        weight: parseInt(it.weight ?? 0, 10) || 0,
+        gift_id: String(it.gift_id ?? '').trim() || null,
+        is_unique: !!it.is_unique,
+        is_active: it.is_active === undefined ? true : !!it.is_active,
+        sort_order: parseInt(it.sort_order ?? 0, 10) || 0,
+      };
+      if (!body.name) throw new Error('import: у записи нет name');
+
+      const id = parseInt(it.id, 10);
+      if (Number.isFinite(id) && byId.has(id)){
+        await api('/admin/prizes/' + encodeURIComponent(id), { method:'PUT', body: JSON.stringify(body) });
+      } else {
+        await api('/admin/prizes', { method:'POST', body: JSON.stringify(body) });
+      }
+    }
+
+    prizesStatus.innerHTML = '<span class="ok">OK</span> • импортировано';
+    importPrizesText.value = '';
+    importPrizesWrap.style.display = 'none';
+    await loadPrizes();
+  } catch (e) {
+    prizesStatus.innerHTML = `<span class="bad">ERR</span> • ${e.message}`;
+  }
+}
+
+// Prize editor controls
+prizeSearchEl?.addEventListener('input', renderPrizes);
+prizeShowInactiveEl?.addEventListener('change', renderPrizes);
+saveAllPrizesBtn?.addEventListener('click', saveAllPrizes);
+exportPrizesBtn?.addEventListener('click', exportPrizes);
+toggleImportPrizesBtn?.addEventListener('click', toggleImportPrizes);
+cancelImportPrizesBtn?.addEventListener('click', () => { importPrizesWrap.style.display='none'; });
+applyImportPrizesBtn?.addEventListener('click', applyImportPrizes);
+
+async function loadTopups() {
+
     topupsBox.innerHTML = '<div class="muted">загрузка...</div>';
     try {
       const d = await api('/admin/topups?limit=80');
@@ -544,6 +797,87 @@
 
   document.getElementById('loadPrizes')?.addEventListener('click', loadPrizes);
   document.getElementById('createPrize')?.addEventListener('click', createPrize);
+
+  prizeSearchEl?.addEventListener('input', () => loadPrizes(false));
+  prizeShowInactiveEl?.addEventListener('change', () => loadPrizes(false));
+
+  exportPrizesBtn?.addEventListener('click', () => {
+    try {
+      const blob = new Blob([JSON.stringify(prizesCache || [], null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'prizes.json';
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 500);
+    } catch (e) { alert('Export error: ' + (e?.message || e)); }
+  });
+
+  toggleImportPrizesBtn?.addEventListener('click', () => {
+    if (!importPrizesWrap) return;
+    importPrizesWrap.style.display = (importPrizesWrap.style.display === 'none' || !importPrizesWrap.style.display) ? 'block' : 'none';
+  });
+  cancelImportPrizesBtn?.addEventListener('click', () => {
+    if (importPrizesWrap) importPrizesWrap.style.display = 'none';
+  });
+
+  applyImportPrizesBtn?.addEventListener('click', async () => {
+    const raw = (importPrizesText?.value || '').trim();
+    if (!raw) return;
+    let arr;
+    try { arr = JSON.parse(raw); } catch (e) { alert('JSON parse error: ' + e.message); return; }
+    if (!Array.isArray(arr)) { alert('Ожидается JSON массив'); return; }
+    prizesStatus.textContent = 'импорт...';
+    const existing = new Set((prizesCache || []).map(x => Number(x.id)));
+    let ok = 0, fail = 0;
+    for (const it of arr) {
+      try {
+        const body = {
+          name: String(it.name || '').trim(),
+          icon_url: (it.icon_url == null ? null : String(it.icon_url).trim()) || null,
+          cost: parseInt(it.cost, 10) || 0,
+          weight: parseInt(it.weight, 10) || 0,
+          gift_id: (it.gift_id == null ? null : String(it.gift_id).trim()) || null,
+          is_unique: !!it.is_unique,
+          is_active: (it.is_active === undefined ? true : !!it.is_active),
+          sort_order: parseInt(it.sort_order, 10) || 0,
+        };
+        if (!body.name) throw new Error('name required');
+        if (it.id != null && existing.has(Number(it.id))) {
+          await api('/admin/prizes/' + encodeURIComponent(Number(it.id)), { method:'PUT', body: JSON.stringify(body) });
+        } else {
+          await api('/admin/prizes', { method:'POST', body: JSON.stringify(body) });
+        }
+        ok++;
+      } catch (e) {
+        console.warn('import prize failed', it, e);
+        fail++;
+      }
+    }
+    prizesStatus.innerHTML = `<span class="${fail? 'bad':'ok'}">${fail? 'WARN':'OK'}</span> • imported: ${ok}, failed: ${fail}`;
+    if (importPrizesWrap) importPrizesWrap.style.display = 'none';
+    await loadPrizes();
+  });
+
+  saveAllPrizesBtn?.addEventListener('click', async () => {
+    if (!prizesDirty.size) return;
+    if (!confirm('Сохранить изменения (' + prizesDirty.size + ')?')) return;
+    prizesStatus.textContent = 'сохраняю все...';
+    let ok = 0, fail = 0;
+    for (const pid of Array.from(prizesDirty)) {
+      try {
+        const body = prizesDirtyBodies.get(pid);
+        if (!body) continue;
+        await api('/admin/prizes/' + encodeURIComponent(pid), { method:'PUT', body: JSON.stringify(body) });
+        ok++;
+      } catch (e) {
+        console.warn('saveAll failed', pid, e);
+        fail++;
+      }
+    }
+    prizesStatus.innerHTML = `<span class="${fail? 'bad':'ok'}">${fail? 'WARN':'OK'}</span> • saved: ${ok}, failed: ${fail}`;
+    await loadPrizes();
+  });
 
 
 
