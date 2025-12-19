@@ -586,8 +586,7 @@ def prizes(req: MeReq):
     items = []
     for r in rows:
         icon_url = (r[3] or "").strip() or None
-        items.append({"id": int(r[0]), "name": str(r[1]), "icon_url": ((r[2] or "").strip() or None),
-            "cost": int(r[3]), "icon_url": icon_url})
+        items.append({"id": int(r[0]), "name": str(r[1]), "cost": int(r[2]), "icon_url": icon_url})
     return {"items": items}
 
 

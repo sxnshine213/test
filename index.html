@@ -563,10 +563,6 @@
         console.warn('refreshCasePrizes failed', e);
       }
     }
-p.classList.add('active');
-      selectedCost = parseInt(p.dataset.cost, 10) || 25;
-      try { tg?.HapticFeedback?.selectionChanged(); } catch (_) {}
-    }));
 
     async function apiPost(path, payload) {
       const res = await fetch(`${API_BASE}${path}`, {
