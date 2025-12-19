@@ -183,6 +183,23 @@ def init_db():
                     )
                     """
                 )
+                # keep prizes schema in sync with migrations (safe to run multiple times)
+                cur.execute("ALTER TABLE prizes ADD COLUMN IF NOT EXISTS gift_id TEXT")
+                cur.execute("ALTER TABLE prizes ADD COLUMN IF NOT EXISTS is_unique BOOLEAN")
+                cur.execute("UPDATE prizes SET is_unique=FALSE WHERE is_unique IS NULL")
+                cur.execute("ALTER TABLE prizes ALTER COLUMN is_unique SET DEFAULT FALSE")
+                cur.execute("ALTER TABLE prizes ALTER COLUMN is_unique SET NOT NULL")
+
+                # Some deployments added prizes.updated_at as NOT NULL; ensure it exists and has sane defaults
+                cur.execute("ALTER TABLE prizes ADD COLUMN IF NOT EXISTS updated_at BIGINT")
+                cur.execute(
+                    "UPDATE prizes SET updated_at = COALESCE(updated_at, created_at, extract(epoch from now())::bigint)"
+                )
+                cur.execute(
+                    "ALTER TABLE prizes ALTER COLUMN updated_at SET DEFAULT (extract(epoch from now())::bigint)"
+                )
+                cur.execute("ALTER TABLE prizes ALTER COLUMN updated_at SET NOT NULL")
+
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_prizes_active_sort ON prizes(is_active, sort_order, id)")
                 cur.execute("ALTER TABLE prizes ADD COLUMN IF NOT EXISTS icon_url TEXT")
 
@@ -297,8 +314,8 @@ def init_db():
                     now = int(time.time())
                     for p in DEFAULT_PRIZES:
                         cur.execute(
-                            "INSERT INTO prizes (id, name, icon_url, cost, weight, is_active, sort_order, created_at) "
-                            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
+                            "INSERT INTO prizes (id, name, icon_url, cost, weight, is_active, sort_order, created_at, updated_at) "
+                            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                             (
                                 int(p["id"]),
                                 str(p["name"]),
@@ -307,6 +324,7 @@ def init_db():
                                 int(p["weight"]),
                                 bool(p.get("is_active", True)),
                                 int(p.get("sort_order", 0)),
+                                now,
                                 now,
                             ),
                         )
@@ -586,7 +604,8 @@ def prizes(req: MeReq):
     items = []
     for r in rows:
         icon_url = (r[3] or "").strip() or None
-        items.append({"id": int(r[0]), "name": str(r[1]), "cost": int(r[2]), "icon_url": icon_url})
+        items.append({"id": int(r[0]), "name": str(r[1]), "icon_url": ((r[2] or "").strip() or None),
+            "cost": int(r[3]), "icon_url": icon_url})
     return {"items": items}
 
 
@@ -1254,7 +1273,7 @@ def admin_list_prizes(request: Request):
         with con:
             with con.cursor() as cur:
                 cur.execute(
-                    "SELECT id, name, icon_url, cost, weight, gift_id, is_unique, is_active, sort_order, created_at "
+                    "SELECT id, name, icon_url, cost, weight, gift_id, is_unique, is_active, sort_order, created_at, updated_at "
                     "FROM prizes ORDER BY sort_order ASC, id ASC"
                 )
                 rows = cur.fetchall()
@@ -1271,6 +1290,7 @@ def admin_list_prizes(request: Request):
             "is_active": bool(r[7]),
             "sort_order": int(r[8]),
             "created_at": int(r[9]),
+            "updated_at": int(r[10]) if r[10] is not None else int(r[9]),
         })
     return {"items": items}
 
@@ -1287,8 +1307,8 @@ def admin_create_prize(request: Request, req: PrizeIn):
                 new_id = int(cur.fetchone()[0])
 
                 cur.execute(
-                    "INSERT INTO prizes (id, name, icon_url, cost, weight, gift_id, is_unique, is_active, sort_order, created_at) "
-                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                    "INSERT INTO prizes (id, name, icon_url, cost, weight, gift_id, is_unique, is_active, sort_order, created_at, updated_at) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                     (
                         new_id,
                         req.name,
@@ -1299,6 +1319,7 @@ def admin_create_prize(request: Request, req: PrizeIn):
                         bool(req.is_unique),
                         bool(req.is_active),
                         int(req.sort_order),
+                        now,
                         now,
                     ),
                 )
@@ -1313,7 +1334,7 @@ def admin_update_prize(request: Request, prize_id: int, req: PrizeIn):
             with con.cursor() as cur:
                 cur.execute(
                     "UPDATE prizes SET name=%s, icon_url=%s, cost=%s, weight=%s, gift_id=%s, is_unique=%s, "
-                    "is_active=%s, sort_order=%s "
+                    "is_active=%s, sort_order=%s, updated_at=%s "
                     "WHERE id=%s RETURNING created_at",
                     (
                         req.name,
@@ -1324,6 +1345,7 @@ def admin_update_prize(request: Request, prize_id: int, req: PrizeIn):
                         bool(req.is_unique),
                         bool(req.is_active),
                         int(req.sort_order),
+                        int(time.time()),
                         int(prize_id),
                     ),
                 )
