@@ -18,46 +18,6 @@ from psycopg_pool import ConnectionPool
 
 app = FastAPI()
 
-# Auto-configure webhook on startup (Render-friendly).
-# Requires a public base URL (RENDER_EXTERNAL_URL or WEBHOOK_BASE_URL / WEBHOOK_URL).
-WEBHOOK_URL = os.getenv("WEBHOOK_URL", "").strip()
-WEBHOOK_BASE_URL = os.getenv("WEBHOOK_BASE_URL", "").strip()
-RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL", "").strip()
-AUTO_SET_WEBHOOK = os.getenv("AUTO_SET_WEBHOOK", "1").strip() not in ("0", "false", "False", "")
-
-def _derive_webhook_url() -> str:
-    if WEBHOOK_URL:
-        return WEBHOOK_URL
-    base = WEBHOOK_BASE_URL or RENDER_EXTERNAL_URL
-    base = (base or "").rstrip("/")
-    if not base:
-        return ""
-    return base + "/tg/webhook"
-
-@app.on_event("startup")
-def _startup_set_webhook():
-    if not AUTO_SET_WEBHOOK:
-        return
-    if not BOT_TOKEN:
-        return
-    url = _derive_webhook_url()
-    if not url:
-        return
-    payload = {
-        "url": url,
-        "allowed_updates": ["message", "callback_query", "pre_checkout_query"],
-        "drop_pending_updates": False,
-    }
-    if TG_WEBHOOK_SECRET:
-        payload["secret_token"] = TG_WEBHOOK_SECRET
-    try:
-        # setWebhook may occasionally fail transiently; do not prevent startup.
-        tg_api_quick("setWebhook", payload, timeout=6.0, retries=2)
-        print(f"[startup] webhook set to: {url}")
-    except Exception as e:
-        print(f"[startup] setWebhook failed: {e}")
-
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # можно ограничить доменами позже
@@ -406,93 +366,23 @@ def extract_tg_user_public(init_data: str) -> Optional[dict]:
 
 # ===== Telegram Bot API helper (Stars) =====
 def tg_api(method: str, payload: dict):
-    """Call Telegram Bot API.
-    - On HTTP/network errors -> HTTP 502
-    - On Telegram 'ok=false' -> propagate Telegram error_code (e.g. 400/403) and description
-    """
     if not BOT_TOKEN:
         raise HTTPException(status_code=500, detail="BOT_TOKEN is not set")
 
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/{method}"
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
-
-    raw = None
-    obj = None
     try:
         with urllib.request.urlopen(req, timeout=20) as resp:
             raw = resp.read().decode("utf-8")
-    except Exception as e:
-        # urllib may raise HTTPError; it still contains body
-        try:
-            if hasattr(e, "read"):
-                raw = e.read().decode("utf-8")
-        except Exception:
-            raw = None
-        if raw:
-            try:
-                obj = json.loads(raw)
-            except Exception:
-                obj = None
-        # If Telegram responded with JSON error, surface it below.
-        if obj and isinstance(obj, dict) and obj.get("ok") is False:
-            code = int(obj.get("error_code") or 502)
-            desc = obj.get("description") or str(obj)
-            raise HTTPException(status_code=code, detail=f"telegram: {desc}")
-        raise HTTPException(status_code=502, detail=f"telegram api error: {e}")
-
-    try:
-        obj = json.loads(raw or "{}")
-    except Exception:
-        raise HTTPException(status_code=502, detail=f"telegram api invalid json: {raw!r}")
-
-    if not obj.get("ok"):
-        code = int(obj.get("error_code") or 502)
-        desc = obj.get("description") or str(obj)
-        raise HTTPException(status_code=code, detail=f"telegram: {desc}")
-    return obj.get("result")
-
-
-
-def tg_api_timeout(method: str, payload: dict, timeout: float):
-    """Telegram Bot API call with a custom timeout (seconds)."""
-    if not BOT_TOKEN:
-        raise HTTPException(status_code=500, detail="BOT_TOKEN is not set")
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/{method}"
-    data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
-    raw = None
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            raw = resp.read().decode("utf-8")
+            obj = json.loads(raw)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"telegram api error: {e}")
 
-    try:
-        obj = json.loads(raw or "{}")
-    except Exception:
-        raise HTTPException(status_code=502, detail=f"telegram api invalid json: {raw!r}")
-
     if not obj.get("ok"):
-        code = int(obj.get("error_code") or 502)
-        desc = obj.get("description") or str(obj)
-        raise HTTPException(status_code=code, detail=f"telegram: {desc}")
-    return obj.get("result")
+        raise HTTPException(status_code=502, detail=f"telegram api not ok: {obj}")
+    return obj["result"]
 
-
-def tg_api_quick(method: str, payload: dict, timeout: float = 4.0, retries: int = 2):
-    """Fast Telegram call for time-sensitive flows (e.g., answerPreCheckoutQuery)."""
-    last = None
-    for i in range(max(1, int(retries))):
-        try:
-            return tg_api_timeout(method, payload, timeout=timeout)
-        except Exception as e:
-            last = e
-            if i < retries - 1:
-                time.sleep(0.2)
-    if last:
-        raise last
-    raise HTTPException(status_code=502, detail="telegram api error")
 
 # ===== Helpers =====
 def mask_uid(uid: str) -> str:
@@ -536,15 +426,6 @@ def get_or_create_user(cur, tg_user_id: str, public: Optional[dict] = None) -> i
     cur.execute("SELECT balance FROM users WHERE tg_user_id=%s", (tg_user_id,))
     row = cur.fetchone()
     return int(row[0]) if row else START_BALANCE
-
-
-
-def get_balance(cur, tg_user_id: str) -> int:
-    """Return user's current balance from DB. Assumes user exists."""
-    cur.execute("SELECT balance FROM users WHERE tg_user_id=%s", (tg_user_id,))
-    row = cur.fetchone()
-    # Should exist because get_or_create_user() is called before most endpoints
-    return int(row[0]) if row and row[0] is not None else 0
 
 
 def fetch_active_prizes(cur) -> list[dict]:
@@ -684,13 +565,13 @@ def inventory_withdraw(req: InventoryWithdrawReq):
                 public = extract_tg_user_public(req.initData)
                 get_or_create_user(cur, uid, public)
 
-                # Lock inventory row to avoid double-withdraw/sell.
-                # IMPORTANT: do not use LEFT JOIN ... FOR UPDATE (Postgres forbids locking the nullable side of an outer join).
-                # We lock the inventory row first, then read prize properties in a separate query.
+                # Lock inventory row to avoid double-withdraw/sell
                 cur.execute(
-                    "SELECT id, prize_id, prize_name, prize_cost, COALESCE(is_locked, FALSE) AS is_locked "
-                    "FROM inventory "
-                    "WHERE id = %s AND tg_user_id = %s "
+                    "SELECT i.id, i.prize_id, i.prize_name, i.prize_cost, COALESCE(i.is_locked, FALSE) AS is_locked, "
+                    "COALESCE(p.is_unique, FALSE) AS is_unique, COALESCE(p.gift_id, '') AS gift_id "
+                    "FROM inventory i "
+                    "LEFT JOIN prizes p ON p.id = i.prize_id "
+                    "WHERE i.id = %s AND i.tg_user_id = %s "
                     "FOR UPDATE",
                     (int(req.inventory_id), uid),
                 )
@@ -698,20 +579,7 @@ def inventory_withdraw(req: InventoryWithdrawReq):
                 if not row:
                     raise HTTPException(status_code=404, detail="inventory item not found")
 
-                inv_id, prize_id, prize_name, prize_cost, is_locked = row
-
-                # Read prize attributes (is_unique, gift_id). Prize row might be missing if admin deleted it; handle safely.
-                cur.execute(
-                    "SELECT COALESCE(is_unique, FALSE) AS is_unique, COALESCE(gift_id, '') AS gift_id "
-                    "FROM prizes WHERE id = %s",
-                    (int(prize_id),),
-                )
-                prow = cur.fetchone()
-                if prow:
-                    is_unique, gift_id = bool(prow[0]), str(prow[1] or "")
-                else:
-                    is_unique, gift_id = False, ""
-
+                inv_id, prize_id, prize_name, prize_cost, is_locked, is_unique, gift_id = row
                 if is_locked:
                     # idempotent response for already requested unique gifts
                     cur.execute(
@@ -953,7 +821,6 @@ def topup_create(req: TopupCreateReq):
         "title": "Пополнение баланса",
         "description": f"+{stars} ⭐ в игре",
         "payload": payload,
-        "provider_token": "",
         "currency": "XTR",
         "prices": [{"label": f"+{stars} ⭐", "amount": stars}],
     })
@@ -972,67 +839,7 @@ async def tg_webhook(request: Request):
 
     if "pre_checkout_query" in update:
         q = update["pre_checkout_query"]
-        # Validate Stars invoice before approving. This prevents accidental/double payments
-        # and protects from mismatched payload/amount.
-        try:
-            currency = q.get("currency")
-            total_amount = int(q.get("total_amount", 0))
-            invoice_payload = q.get("invoice_payload", "")
-            from_id = str((q.get("from") or {}).get("id") or "")
-
-            ok = True
-            err = None
-
-            if currency != "XTR":
-                ok = False
-                err = "Unsupported currency"
-            elif total_amount <= 0:
-                ok = False
-                err = "Bad amount"
-            elif not invoice_payload:
-                ok = False
-                err = "Missing payload"
-
-            if ok:
-                with pool.connection() as con:
-                    with con:
-                        with con.cursor() as cur:
-                            cur.execute("SET LOCAL statement_timeout = %s", ("2500ms",))
-                            cur.execute(
-                                "SELECT tg_user_id, stars_amount, status FROM topups WHERE payload=%s FOR UPDATE",
-                                (invoice_payload,),
-                            )
-                            row = cur.fetchone()
-                            if not row:
-                                ok = False
-                                err = "Unknown invoice"
-                            else:
-                                uid, expected, status = str(row[0]), int(row[1]), str(row[2])
-                                if status == "paid":
-                                    # already processed; allow Telegram to proceed, we'll no-op on successful_payment
-                                    ok = True
-                                elif uid != from_id:
-                                    ok = False
-                                    err = "Wrong payer"
-                                elif expected != total_amount:
-                                    ok = False
-                                    err = "Amount mismatch"
-                                elif status not in ("created", "pending"):
-                                    # any other status means we don't expect a payment right now
-                                    ok = False
-                                    err = "Bad status"
-
-            payload = {"pre_checkout_query_id": q["id"], "ok": bool(ok)}
-            if not ok:
-                payload["error_message"] = err or "Payment rejected"
-            tg_api_quick("answerPreCheckoutQuery", payload, timeout=4.0, retries=2)
-        except Exception:
-            # In case of unexpected errors (DB cold start / transient network), try to approve to avoid hanging the payment UI.
-            # If something is wrong, we will reconcile later via getStarTransactions.
-            try:
-                tg_api_quick("answerPreCheckoutQuery", {"pre_checkout_query_id": q.get("id"), "ok": True}, timeout=4.0, retries=2)
-            except Exception:
-                pass
+        tg_api("answerPreCheckoutQuery", {"pre_checkout_query_id": q["id"], "ok": True})
         return {"ok": True}
 
     msg = update.get("message") or {}
@@ -1074,33 +881,6 @@ async def tg_webhook(request: Request):
 
 
 # ===== Admin API =====
-
-class WebhookSetupReq(BaseModel):
-    url: Optional[str] = None
-
-
-@app.get("/admin/webhook_info")
-def admin_webhook_info(request: Request):
-    require_admin(request)
-    return {"result": tg_api("getWebhookInfo", {})}
-
-
-@app.post("/admin/setup_webhook")
-def admin_setup_webhook(request: Request, req: WebhookSetupReq):
-    require_admin(request)
-    url = (req.url or "").strip() or _derive_webhook_url()
-    if not url:
-        raise HTTPException(status_code=400, detail="No webhook url (set WEBHOOK_URL or RENDER_EXTERNAL_URL)")
-    payload = {
-        "url": url,
-        "allowed_updates": ["message", "callback_query", "pre_checkout_query"],
-        "drop_pending_updates": False,
-    }
-    if TG_WEBHOOK_SECRET:
-        payload["secret_token"] = TG_WEBHOOK_SECRET
-    tg_api("setWebhook", payload)
-    return {"ok": True, "url": url}
-
 @app.get("/admin/stats")
 def admin_stats(request: Request):
     require_admin(request)
@@ -1171,116 +951,10 @@ def admin_topups(request: Request, limit: int = Query(80, ge=1, le=500)):
             "stars_amount": int(r[2]),
             "status": r[3],
             "telegram_charge_id": r[4],
-            "created_at": int(r[5]),
+            "created_at": int(r[5]), "is_locked": bool(r[6]), "is_unique": bool(r[7]),
             "paid_at": int(r[6]) if r[6] else None,
         })
     return {"items": items}
-
-
-
-
-@app.get("/admin/my_star_balance")
-def admin_my_star_balance(request: Request):
-    """Return bot's current Telegram Stars balance (Bot API 9.1+)."""
-    require_admin(request)
-    # getMyStarBalance returns a StarAmount object in Bot API. Surface raw result.
-    result = tg_api("getMyStarBalance", {})
-    return {"ok": True, "result": result}
-
-@app.get("/admin/star_transactions")
-def admin_star_transactions(request: Request, limit: int = 50, offset: int | None = None):
-    """Debug helper: fetch recent Telegram Stars transactions for the bot."""
-    require_admin(request)
-    payload: dict = {"limit": int(limit)}
-    if offset is not None:
-        payload["offset"] = int(offset)
-    result = tg_api("getStarTransactions", payload)
-    return {"ok": True, "result": result}
-
-
-def _find_invoice_payload(obj):
-    """Best-effort recursive search for invoice_payload in StarTransaction structure."""
-    if isinstance(obj, dict):
-        if "invoice_payload" in obj and obj["invoice_payload"]:
-            return obj["invoice_payload"]
-        for v in obj.values():
-            found = _find_invoice_payload(v)
-            if found:
-                return found
-    elif isinstance(obj, list):
-        for v in obj:
-            found = _find_invoice_payload(v)
-            if found:
-                return found
-    return None
-
-
-def _find_star_amount(obj):
-    """Best-effort: return integer Stars amount from StarTransaction structure."""
-    if isinstance(obj, dict):
-        # common keys: amount, star_amount, total_amount
-        for k in ("amount", "star_amount", "total_amount"):
-            if k in obj and obj[k] is not None:
-                try:
-                    return int(obj[k])
-                except Exception:
-                    pass
-        for v in obj.values():
-            found = _find_star_amount(v)
-            if found is not None:
-                return found
-    elif isinstance(obj, list):
-        for v in obj:
-            found = _find_star_amount(v)
-            if found is not None:
-                return found
-    return None
-
-
-@app.post("/admin/reconcile_star_transactions")
-def admin_reconcile_star_transactions(request: Request, limit: int = 200):
-    """
-    Safety net: reconcile bot Stars transactions with local `topups` table.
-    Use if webhook was down and some successful payments were missed.
-    """
-    require_admin(request)
-    result = tg_api("getStarTransactions", {"limit": int(limit)})
-    txs = (result or {}).get("transactions") or (result or {}).get("result", {}).get("transactions") or []
-    fixed = 0
-    checked = 0
-
-    with pool.connection() as con:
-        with con:
-            with con.cursor() as cur:
-                for tx in txs:
-                    checked += 1
-                    payload = _find_invoice_payload(tx)
-                    if not payload:
-                        continue
-                    amt = _find_star_amount(tx)
-                    if amt is None:
-                        continue
-                    tx_id = str(tx.get("id") or "")
-
-                    cur.execute("SELECT tg_user_id, stars_amount, status FROM topups WHERE payload=%s FOR UPDATE", (payload,))
-                    row = cur.fetchone()
-                    if not row:
-                        continue
-                    uid, expected, status = str(row[0]), int(row[1]), str(row[2])
-                    if status == "paid":
-                        continue
-                    if expected != int(amt):
-                        continue
-
-                    # Apply the same accounting as in webhook
-                    cur.execute("UPDATE users SET balance = balance + %s WHERE tg_user_id=%s", (expected, uid))
-                    cur.execute(
-                        "UPDATE topups SET status='paid', telegram_charge_id=%s, paid_at=%s WHERE payload=%s",
-                        (tx_id or None, int(time.time()), payload),
-                    )
-                    fixed += 1
-
-    return {"ok": True, "checked": checked, "fixed": fixed}
 
 
 @app.get("/admin/user/{tg_user_id}")
@@ -1416,7 +1090,7 @@ def admin_create_prize(request: Request, req: PrizeIn):
                 cur.execute(
                     "INSERT INTO prizes (id, name, icon_url, cost, weight, is_active, sort_order, created_at, gift_id, is_unique) "
                     "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-                    (new_id, req.name, (req.icon_url or None), int(req.cost), int(req.weight), bool(req.is_active), int(req.sort_order), now, (req.gift_id or None), bool(req.is_unique)),
+                    (new_id, req.name, (req.icon_url or None), int(req.cost), int(req.weight), bool(req.is_active), int(req.sort_order), now),
                 )
     return {"id": new_id, "created_at": now, **req.model_dump()}
 
@@ -1430,7 +1104,7 @@ def admin_update_prize(request: Request, prize_id: int, req: PrizeIn):
                 cur.execute(
                     "UPDATE prizes SET name=%s, icon_url=%s, cost=%s, weight=%s, is_active=%s, sort_order=%s, gift_id=%s, is_unique=%s "
                     "WHERE id=%s RETURNING created_at",
-                    (req.name, (req.icon_url or None), int(req.cost), int(req.weight), bool(req.is_active), int(req.sort_order), (req.gift_id or None), bool(req.is_unique), int(prize_id)),
+                    (req.name, (req.icon_url or None), int(req.cost), int(req.weight), bool(req.is_active), int(req.sort_order), int(prize_id)),
                 )
                 row = cur.fetchone()
                 if not row:
@@ -1535,10 +1209,3 @@ def admin_claim_fulfill(claim_id: int, req: AdminClaimNote, request: Request):
     return {"ok": True, "id": int(claim_id), "status": "fulfilled"}
 
 
-
-
-if __name__ == '__main__':
-    import os
-    import uvicorn
-    port = int(os.environ.get('PORT', '8000'))
-    uvicorn.run('server:app', host='0.0.0.0', port=port, proxy_headers=True)
