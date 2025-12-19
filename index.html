@@ -339,15 +339,15 @@
     .recent-win__prize-icon{width:14px;height:14px;border-radius:3px;object-fit:cover;margin-right:6px;vertical-align:middle;}
 
   
-    /* ===== Cases grid ===== */
-    .cases { display:grid; grid-template-columns:repeat(2, 1fr); gap:10px; margin-bottom:12px; }
-    .case-card { background:#162235; border-radius:14px; padding:10px; cursor:pointer; user-select:none; border:1px solid transparent; }
-    .case-card.active { box-shadow: inset 0 0 0 2px rgba(74,163,255,0.55); }
-    .case-img { width:100%; height:92px; border-radius:12px; background:#0b1320; object-fit:cover; display:block; }
-    .case-title { margin:8px 0 2px 0; font-weight:900; font-size:14px; }
-    .case-sub { opacity:.8; font-size:12px; }
-
-  </style>
+    .cases { margin-top: 6px; }
+    .cases-grid { display:grid; grid-template-columns:repeat(2,1fr); gap:10px; }
+    .case-card { background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.08); border-radius:14px; padding:10px; cursor:pointer; }
+    .case-card.active { outline: 2px solid rgba(140, 255, 180, .9); }
+    .case-img { width:100%; height:110px; border-radius:12px; background: rgba(255,255,255,.06); display:flex; align-items:center; justify-content:center; overflow:hidden; }
+    .case-img img { width:100%; height:100%; object-fit:cover; display:block; }
+    .case-name { margin-top:8px; font-weight:800; font-size:14px; line-height:1.2; }
+    .case-price { margin-top:6px; font-size:13px; opacity:.9; }
+</style>
 </head>
 
 <body>
@@ -369,12 +369,14 @@
       </div>
 
 
-      <div class="tabs" id="costTabs">
-        <div class="pill active" data-cost="25">25 ⭐</div>
-        <div class="pill" data-cost="50">50 ⭐</div>
+      
+      <div class="cases">
+        <div id="casesGrid" class="cases-grid"></div>
       </div>
+      <div id="selectedCaseInfo" class="muted" style="margin-top:10px;">Выберите кейс</div>
 
-      <div id="casesGrid" class="cases" style="display:none;"></div>
+<div class="pill" data-cost="50">50 ⭐</div>
+      </div>
 
       <div class="roulette-wrap">
         <div class="roulette" id="roulette" data-initialized="false">
@@ -570,93 +572,17 @@
     const btnSell = document.getElementById('btnSell');
     const btnKeep = document.getElementById('btnKeep');
 
-    const pills = Array.from(document.querySelectorAll('.pill[data-cost]'));
-    let selectedCost = 25;
+    
+    const casesGrid = document.getElementById('casesGrid');
+    const selectedCaseInfo = document.getElementById('selectedCaseInfo');
+
     let selectedCaseId = null;
+    let selectedCasePrice = 25;
+    let selectedCaseName = null;
 
 
-    let pendingSpinId = null;
-    let pendingPrize = null;
 
-    pills.forEach(p => p.addEventListener('click', () => {
-      pills.forEach(x => x.classList.remove('active'));
-
-
-    // ===== Cases =====
-    async function loadCases() {
-      const grid = document.getElementById('casesGrid');
-      const tabs = document.getElementById('costTabs');
-      if (!grid) return;
-      try {
-        const res = await apiGet('/cases');
-        const items = Array.isArray(res?.items) ? res.items : [];
-        if (!items.length) return;
-
-        // show cases, hide legacy cost tabs
-        grid.style.display = 'grid';
-        if (tabs) tabs.style.display = 'none';
-
-        // pick first case by default
-        selectedCaseId = items[0].id;
-        selectedCost = items[0].price;
-
-        grid.innerHTML = '';
-        for (const c of items) {
-          const card = document.createElement('div');
-          card.className = 'case-card' + (c.id === selectedCaseId ? ' active' : '');
-          const img = document.createElement('img');
-          img.className = 'case-img';
-          img.alt = c.name || 'case';
-          img.src = (c.image_url && String(c.image_url).trim()) ? String(c.image_url).trim() : '';
-          img.onerror = () => { img.style.display='none'; };
-          const title = document.createElement('div');
-          title.className = 'case-title';
-          title.textContent = c.name || `Case #${c.id}`;
-          const sub = document.createElement('div');
-          sub.className = 'case-sub';
-          sub.textContent = `Цена: ⭐ ${c.price ?? ''}`;
-
-          card.appendChild(img);
-          card.appendChild(title);
-          card.appendChild(sub);
-
-          card.addEventListener('click', async () => {
-            selectedCaseId = c.id;
-            selectedCost = c.price;
-            // highlight
-            [...grid.children].forEach(x => x.classList.remove('active'));
-            card.classList.add('active');
-            try { tg?.HapticFeedback?.selectionChanged(); } catch (_) {}
-            await loadCases();
-    refreshPrizes();
-          });
-
-          grid.appendChild(card);
-        }
-
-        await refreshPrizes();
-      } catch (e) {
-        console.warn('loadCases failed', e);
-      }
-    }
-
-
-      p.classList.add('active');
-      selectedCost = parseInt(p.dataset.cost, 10) || 25;
-      try { tg?.HapticFeedback?.selectionChanged(); } catch (_) {}
-    }));
-
-    async function apiGet(path) {
-      const res = await fetch(`${API_BASE}${path}`);
-      if (!res.ok) {
-        const text = await res.text();
-        throw new Error(`HTTP ${res.status}: ${text}`);
-      }
-      return await res.json();
-    }
-
-
-    async function apiPost(path, payload) {
+async function apiPost(path, payload) {
       const res = await fetch(`${API_BASE}${path}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -669,6 +595,94 @@
       const data = await res.json();
       return data;
     }
+    async function apiGet(path) {
+      const res = await fetch(`${API_BASE}${path}`, { method: 'GET' });
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`HTTP ${res.status}: ${text}`);
+      }
+      return await res.json();
+    }
+
+    function renderCases(items) {
+      if (!casesGrid) return;
+      casesGrid.innerHTML = '';
+      (items || []).forEach(c => {
+        const card = document.createElement('div');
+        card.className = 'case-card';
+        card.dataset.caseId = String(c.id);
+
+        const img = c.image_url ? `<img src="${c.image_url}" alt="">` : `<div style="opacity:.8;font-weight:900;">🎁</div>`;
+        card.innerHTML = `
+          <div class="case-img">${img}</div>
+          <div class="case-name">${c.name}</div>
+          <div class="case-price">Цена: ⭐ ${c.price}</div>
+        `;
+
+        card.addEventListener('click', async () => {
+          await selectCase(c.id);
+        });
+
+        casesGrid.appendChild(card);
+      });
+    }
+
+    function markActiveCase() {
+      if (!casesGrid) return;
+      Array.from(casesGrid.querySelectorAll('.case-card')).forEach(el => {
+        el.classList.toggle('active', Number(el.dataset.caseId) === Number(selectedCaseId));
+      });
+    }
+
+    async function selectCase(caseId) {
+      selectedCaseId = Number(caseId);
+      markActiveCase();
+      await loadCasePrizes();
+    }
+
+    async function loadCases() {
+      try {
+        const res = await apiGet('/cases');
+        const items = Array.isArray(res?.items) ? res.items : [];
+        renderCases(items);
+
+        if (items.length && selectedCaseId == null) {
+          await selectCase(items[0].id);
+        } else {
+          markActiveCase();
+        }
+      } catch (e) {
+        console.warn('loadCases failed, fallback to /prizes', e);
+        // Fallback: keep roulette from global prizes
+        if (selectedCaseInfo) selectedCaseInfo.textContent = 'Кейсы недоступны, используем общий пул призов';
+        await refreshPrizes();
+      }
+    }
+
+    async function loadCasePrizes() {
+      if (!selectedCaseId) return;
+      try {
+        const res = await apiGet(`/cases/${selectedCaseId}/prizes`);
+        const items = Array.isArray(res?.items) ? res.items : [];
+        const c = res?.case;
+        if (c) {
+          selectedCaseName = c.name;
+          selectedCasePrice = Number(c.price || 25);
+          if (selectedCaseInfo) selectedCaseInfo.textContent = `${c.name} — Цена: ⭐ ${selectedCasePrice}`;
+        } else {
+          if (selectedCaseInfo) selectedCaseInfo.textContent = `Кейс #${selectedCaseId}`;
+        }
+
+        setPrizes(items);
+        rebuildRouletteFromPrizes(items);
+      } catch (e) {
+        console.warn('loadCasePrizes failed, fallback to /prizes', e);
+        if (selectedCaseInfo) selectedCaseInfo.textContent = 'Не удалось загрузить призы кейса, используем общий пул';
+        await refreshPrizes();
+      }
+    }
+
+
 
 
     // ===== Prizes (icons from backend) =====
@@ -714,7 +728,7 @@
 
     async function refreshPrizes() {
       try {
-        const res = await apiPost('/prizes', { initData: tg?.initData || '', case_id: selectedCaseId });
+        const res = await apiPost('/prizes', { initData: tg?.initData || '' });
         const items = Array.isArray(res?.items) ? res.items : [];
         setPrizes(items);
         rebuildRouletteFromPrizes(items);
@@ -1234,7 +1248,7 @@
 
         btn.disabled = true;
         try {
-          const prize = await apiPost('/spin', { initData: tg?.initData || '', case_id: selectedCaseId, cost: selectedCost });
+          const prize = await apiPost('/spin', { initData: tg?.initData || '', case_id: selectedCaseId, cost: selectedCasePrice });
 
           if (balanceBadge && prize && typeof prize.balance === 'number') {
             balanceBadge.textContent = `⭐ ${prize.balance}`;
@@ -1252,7 +1266,7 @@
         }
       });
       (async () => {
-        await refreshPrizes();
+        await loadCases();
         initInfiniteRoulette();
         refreshBalance();
         refreshRecentWins();
