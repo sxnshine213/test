@@ -490,7 +490,7 @@
         const res = await apiPost('/inventory/sell', {
           initData: tg?.initData || '',
           inventory_id: invId
-        });
+        }, `sell-${invId}`);
 
         if (balanceBadge && res && typeof res.balance === 'number') {
           balanceBadge.textContent = `⭐ ${res.balance}`;
@@ -506,7 +506,7 @@
         const res = await apiPost('/inventory/withdraw', {
           initData: tg?.initData || '',
           inventory_id: invId
-        });
+        }, `withdraw-${invId}`);
 
         // Refresh UI
         await refreshBalance();
@@ -572,10 +572,10 @@
       try { tg?.HapticFeedback?.selectionChanged(); } catch (_) {}
     }));
 
-    async function apiPost(path, payload) {
+    async function apiPost(path, payload, idemKey) {
       const res = await fetch(`${API_BASE}${path}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: Object.assign({ 'Content-Type': 'application/json' }, idemKey ? { 'Idempotency-Key': String(idemKey) } : {}),
         body: JSON.stringify(payload)
       });
       if (!res.ok) {
@@ -985,7 +985,7 @@
           initData: tg?.initData || '',
           spin_id: pendingSpinId,
           action
-        });
+        }, `claim-${pendingSpinId}-${action}`);
 
         if (balanceBadge && res && typeof res.balance === 'number') {
           balanceBadge.textContent = `⭐ ${res.balance}`;
@@ -1150,7 +1150,8 @@
 
         btn.disabled = true;
         try {
-          const prize = await apiPost('/spin', { initData: tg?.initData || '', cost: selectedCost });
+          const spinKey = `spin-${crypto.randomUUID()}`;
+          const prize = await apiPost('/spin', { initData: tg?.initData || '', cost: selectedCost }, spinKey);
 
           if (balanceBadge && prize && typeof prize.balance === 'number') {
             balanceBadge.textContent = `⭐ ${prize.balance}`;
