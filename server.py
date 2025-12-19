@@ -5,7 +5,6 @@ import random
 import uuid
 import hmac
 import hashlib
-import secrets
 import urllib.request
 from urllib.parse import parse_qsl
 from typing import Literal, Optional
@@ -85,12 +84,6 @@ PG_POOL_MAX = int(os.environ.get("PG_POOL_MAX", "10"))
 
 ADMIN_KEY = os.environ.get("ADMIN_KEY", "").strip()
 
-SPIN_COOLDOWN_SEC = float(os.environ.get("SPIN_COOLDOWN_SEC", "2.0"))
-REQUIRE_CLAIM_BEFORE_NEXT_SPIN = os.environ.get("REQUIRE_CLAIM_BEFORE_NEXT_SPIN", "1").strip() not in ("0", "false", "False", "")
-IDEMPOTENCY_TTL_SEC = int(os.environ.get("IDEMPOTENCY_TTL_SEC", str(24 * 3600)))
-MAX_CLIENT_SEED_LEN = int(os.environ.get("MAX_CLIENT_SEED_LEN", "64"))
-
-
 # дефолтные призы (для первичного seed таблицы prizes, если она пустая)
 DEFAULT_PRIZES = [
     {"id": 1, "name": "❤️ Сердце", "cost": 15, "weight": 50, "sort_order": 10, "is_active": True},
@@ -120,13 +113,8 @@ class MeReq(WithInitData):
     pass
 
 
-class CasesReq(WithInitData):
-    pass
-
-
 class PrizesReq(WithInitData):
     case_id: Optional[int] = None
-
 
 
 class SpinReq(WithInitData):
@@ -158,12 +146,6 @@ class TopupCreateReq(WithInitData):
 class LeaderboardReq(WithInitData):
     limit: int = 30
 
-class FairnessStateReq(WithInitData):
-    pass
-
-class FairnessSetClientSeedReq(WithInitData):
-    client_seed: str
-
 
 class AdminAdjustReq(BaseModel):
     tg_user_id: str
@@ -193,30 +175,6 @@ class PrizeOut(PrizeIn):
     id: int
     created_at: int
 
-class CaseIn(BaseModel):
-    name: str
-    image_url: Optional[str] = None
-    price: int
-    is_active: bool = True
-    sort_order: int = 0
-
-
-class CaseOut(CaseIn):
-    id: int
-    created_at: int
-
-
-class CasePrizeIn(BaseModel):
-    prize_id: int
-    weight: int
-    is_active: bool = True
-    sort_order: int = 0
-
-
-class CasePrizesReplaceReq(BaseModel):
-    items: list[CasePrizeIn]
-
-
 
 # ===== DB init =====
 def init_db():
@@ -238,14 +196,6 @@ def init_db():
                 cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_name TEXT")
                 cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS photo_url TEXT")
 
-
-                cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS banned BOOLEAN NOT NULL DEFAULT FALSE")
-                cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS client_seed TEXT")
-                cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS nonce INTEGER NOT NULL DEFAULT 0")
-                cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS server_seed TEXT")
-                cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS server_seed_hash TEXT")
-                cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_spin_at BIGINT")
-
                 # prizes
                 cur.execute(
                     """
@@ -262,45 +212,58 @@ def init_db():
                     """
                 )
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_prizes_active_sort ON prizes(is_active, sort_order, id)")
-                cur.execute("ALTER TABLE prizes ADD COLUMN IF NOT EXISTS icon_url TEXT")
-                # cases + mapping
+                # cases (multiple roulette boxes)
                 cur.execute(
                     """
                     CREATE TABLE IF NOT EXISTS cases (
-                      id BIGSERIAL PRIMARY KEY,
+                      id BIGINT PRIMARY KEY,
                       name TEXT NOT NULL,
                       image_url TEXT,
                       price INTEGER NOT NULL,
                       is_active BOOLEAN NOT NULL DEFAULT TRUE,
                       sort_order INTEGER NOT NULL DEFAULT 0,
-                      created_at BIGINT NOT NULL
+                      created_at BIGINT NOT NULL,
+                      updated_at BIGINT
                     )
                     """
                 )
-                cur.execute("CREATE INDEX IF NOT EXISTS idx_cases_active_sort ON cases(is_active, sort_order, id)")
 
                 cur.execute(
                     """
                     CREATE TABLE IF NOT EXISTS case_prizes (
                       case_id BIGINT NOT NULL REFERENCES cases(id) ON DELETE CASCADE,
                       prize_id BIGINT NOT NULL REFERENCES prizes(id) ON DELETE CASCADE,
-                      weight INTEGER NOT NULL,
+                      weight INTEGER,
                       is_active BOOLEAN NOT NULL DEFAULT TRUE,
                       sort_order INTEGER NOT NULL DEFAULT 0,
                       created_at BIGINT NOT NULL,
+                      updated_at BIGINT,
                       PRIMARY KEY (case_id, prize_id)
                     )
                     """
                 )
-                
-# If case_prizes existed before (old schema), ensure columns exist before indexes
-cur.execute("ALTER TABLE case_prizes ADD COLUMN IF NOT EXISTS sort_order INTEGER NOT NULL DEFAULT 0")
-cur.execute("ALTER TABLE case_prizes ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE")
-cur.execute("ALTER TABLE case_prizes ADD COLUMN IF NOT EXISTS weight INTEGER NOT NULL DEFAULT 1")
-cur.execute("ALTER TABLE case_prizes ADD COLUMN IF NOT EXISTS created_at BIGINT NOT NULL DEFAULT 0")
 
+                # forward-compatible alters (if table existed with missing columns)
+                cur.execute("ALTER TABLE cases ADD COLUMN IF NOT EXISTS image_url TEXT")
+                cur.execute("ALTER TABLE cases ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE")
+                cur.execute("ALTER TABLE cases ADD COLUMN IF NOT EXISTS sort_order INTEGER NOT NULL DEFAULT 0")
+                cur.execute("ALTER TABLE cases ADD COLUMN IF NOT EXISTS created_at BIGINT")
+                cur.execute("ALTER TABLE cases ADD COLUMN IF NOT EXISTS updated_at BIGINT")
+
+                cur.execute("ALTER TABLE case_prizes ADD COLUMN IF NOT EXISTS weight INTEGER")
+                cur.execute("ALTER TABLE case_prizes ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE")
+                cur.execute("ALTER TABLE case_prizes ADD COLUMN IF NOT EXISTS sort_order INTEGER NOT NULL DEFAULT 0")
+                cur.execute("ALTER TABLE case_prizes ADD COLUMN IF NOT EXISTS created_at BIGINT")
+                cur.execute("ALTER TABLE case_prizes ADD COLUMN IF NOT EXISTS updated_at BIGINT")
+
+                # add case columns to spins
+                cur.execute("ALTER TABLE spins ADD COLUMN IF NOT EXISTS case_id BIGINT")
+                cur.execute("ALTER TABLE spins ADD COLUMN IF NOT EXISTS case_name TEXT")
+
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_cases_active_sort ON cases(is_active, sort_order, id)")
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_case_prizes_case_active_sort ON case_prizes(case_id, is_active, sort_order, prize_id)")
 
+                cur.execute("ALTER TABLE prizes ADD COLUMN IF NOT EXISTS icon_url TEXT")
 
                 # spins / inventory / topups
                 cur.execute(
@@ -317,14 +280,6 @@ cur.execute("ALTER TABLE case_prizes ADD COLUMN IF NOT EXISTS created_at BIGINT 
                     )
                     """
                 )
-                
-
-                # provably-fair fields for spins (non-breaking; added as nullable)
-                cur.execute("ALTER TABLE spins ADD COLUMN IF NOT EXISTS nonce INTEGER")
-                cur.execute("ALTER TABLE spins ADD COLUMN IF NOT EXISTS client_seed TEXT")
-                cur.execute("ALTER TABLE spins ADD COLUMN IF NOT EXISTS server_seed TEXT")
-                cur.execute("ALTER TABLE spins ADD COLUMN IF NOT EXISTS server_seed_hash TEXT")
-                cur.execute("ALTER TABLE spins ADD COLUMN IF NOT EXISTS rng_hex TEXT")
                 cur.execute(
                     """
                     CREATE TABLE IF NOT EXISTS inventory (
@@ -337,10 +292,6 @@ cur.execute("ALTER TABLE case_prizes ADD COLUMN IF NOT EXISTS created_at BIGINT 
                     )
                     """
                 )
-                # track case used for the spin (optional for older deployments)
-                cur.execute("ALTER TABLE spins ADD COLUMN IF NOT EXISTS case_id BIGINT")
-                cur.execute("CREATE INDEX IF NOT EXISTS idx_spins_case_time ON spins(case_id, created_at)")
-
                 cur.execute(
                     """
                     CREATE TABLE IF NOT EXISTS topups (
@@ -360,52 +311,6 @@ cur.execute("ALTER TABLE case_prizes ADD COLUMN IF NOT EXISTS created_at BIGINT 
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_spins_time ON spins(created_at)")
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_inv_user_time ON inventory(tg_user_id, created_at)")
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_topups_user_time ON topups(tg_user_id, created_at)")
-
-                # accounting / idempotency / withdrawals
-                cur.execute(
-    """
-    CREATE TABLE IF NOT EXISTS ledger (
-      id BIGSERIAL PRIMARY KEY,
-      tg_user_id TEXT NOT NULL REFERENCES users(tg_user_id) ON DELETE CASCADE,
-      delta INTEGER NOT NULL,
-      reason TEXT NOT NULL,
-      ref TEXT,
-      created_at BIGINT NOT NULL
-    )
-    """
-)
-                cur.execute("CREATE INDEX IF NOT EXISTS idx_ledger_user_time ON ledger(tg_user_id, created_at)")
-
-                cur.execute(
-    """
-    CREATE TABLE IF NOT EXISTS idempotency (
-      tg_user_id TEXT NOT NULL,
-      key TEXT NOT NULL,
-      response JSONB NOT NULL,
-      created_at BIGINT NOT NULL,
-      PRIMARY KEY (tg_user_id, key)
-    )
-    """
-)
-                cur.execute("CREATE INDEX IF NOT EXISTS idx_idem_time ON idempotency(created_at)")
-
-                cur.execute(
-    """
-    CREATE TABLE IF NOT EXISTS withdrawals (
-      id BIGSERIAL PRIMARY KEY,
-      tg_user_id TEXT NOT NULL REFERENCES users(tg_user_id) ON DELETE CASCADE,
-      inventory_id BIGINT NOT NULL,
-      prize_id BIGINT NOT NULL,
-      gift_id TEXT NOT NULL,
-      status TEXT NOT NULL,
-      telegram_result TEXT,
-      created_at BIGINT NOT NULL,
-      updated_at BIGINT
-    )
-    """
-)
-                cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_withdrawals_inventory ON withdrawals(inventory_id)")
-                cur.execute("CREATE INDEX IF NOT EXISTS idx_withdrawals_status_time ON withdrawals(status, created_at)")
                 # gifts/withdrawals extensions
                 cur.execute("ALTER TABLE prizes ADD COLUMN IF NOT EXISTS gift_id TEXT")
                 cur.execute("ALTER TABLE prizes ADD COLUMN IF NOT EXISTS is_unique BOOLEAN DEFAULT FALSE")
@@ -453,39 +358,49 @@ cur.execute("ALTER TABLE case_prizes ADD COLUMN IF NOT EXISTS created_at BIGINT 
                                 False,
                             ),
                         )
-                # seed cases if empty (defaults for backward-compat)
-                cur.execute("SELECT COUNT(*) FROM cases")
-                cc = int(cur.fetchone()[0] or 0)
-                now = int(time.time())
-                if cc == 0:
-                    cur.execute(
-                        "INSERT INTO cases (id, name, image_url, price, is_active, sort_order, created_at) "
-                        "VALUES (1,'Кейс 25⭐',NULL,25,TRUE,0,%s) ON CONFLICT (id) DO NOTHING",
-                        (now,),
-                    )
-                    cur.execute(
-                        "INSERT INTO cases (id, name, image_url, price, is_active, sort_order, created_at) "
-                        "VALUES (2,'Кейс 50⭐',NULL,50,TRUE,1,%s) ON CONFLICT (id) DO NOTHING",
-                        (now,),
-                    )
 
-                # ensure mappings exist (for every case & prize)
-                cur.execute("SELECT id FROM cases")
-                case_ids = [int(r[0]) for r in cur.fetchall()]
-                for cid in case_ids:
-                    cur.execute(
-                        "INSERT INTO case_prizes (case_id, prize_id, weight, is_active, sort_order, created_at) "
-                        "SELECT %s, p.id, p.weight, p.is_active, p.sort_order, %s "
-                        "FROM prizes p "
-                        "ON CONFLICT (case_id, prize_id) DO NOTHING",
-                        (cid, now),
-                    )
+
+
+                # seed cases if empty
+                cur.execute("SELECT COUNT(*) FROM cases")
+                cnt_cases = int(cur.fetchone()[0])
+                if cnt_cases == 0:
+                    now = int(time.time())
+                    default_cases = [
+                        {"id": 1, "name": "Bronze Case", "image_url": "", "price": 25, "sort_order": 10},
+                        {"id": 2, "name": "Gold Case", "image_url": "", "price": 50, "sort_order": 20},
+                    ]
+                    for c in default_cases:
+                        cur.execute(
+                            "INSERT INTO cases (id, name, image_url, price, is_active, sort_order, created_at) "
+                            "VALUES (%s,%s,%s,%s,TRUE,%s,%s)",
+                            (int(c["id"]), str(c["name"]), (c.get("image_url") or None), int(c["price"]), int(c["sort_order"]), now),
+                        )
+
+                # seed case prizes if empty (attach all active prizes to all cases with their base weights)
+                cur.execute("SELECT COUNT(*) FROM case_prizes")
+                cnt_cp = int(cur.fetchone()[0])
+                if cnt_cp == 0:
+                    now = int(time.time())
+                    cur.execute("SELECT id, weight, sort_order FROM prizes WHERE is_active = TRUE AND weight > 0 ORDER BY sort_order ASC, id ASC")
+                    prize_rows = cur.fetchall()
+                    cur.execute("SELECT id FROM cases WHERE is_active = TRUE ORDER BY sort_order ASC, id ASC")
+                    case_rows = cur.fetchall()
+                    for (case_id,) in case_rows:
+                        so = 0
+                        for pid, w, pso in prize_rows:
+                            cur.execute(
+                                "INSERT INTO case_prizes (case_id, prize_id, weight, is_active, sort_order, created_at) "
+                                "VALUES (%s,%s,%s,TRUE,%s,%s) "
+                                "ON CONFLICT (case_id, prize_id) DO NOTHING",
+                                (int(case_id), int(pid), int(w), int(pso), now),
+                            )
 
 
 init_db()
 
 
-                # ===== Admin auth =====
+# ===== Admin auth =====
 def require_admin(request: Request):
     if not ADMIN_KEY:
         raise HTTPException(status_code=503, detail="ADMIN_KEY not set")
@@ -687,86 +602,6 @@ def display_name(username: Optional[str], first_name: Optional[str], last_name: 
     return full if full else mask_uid(uid)
 
 
-def _new_server_seed() -> str:
-    return secrets.token_hex(32)
-
-def _seed_hash(seed: str) -> str:
-    return hashlib.sha256(seed.encode("utf-8")).hexdigest()
-
-def ensure_user_fairness(cur, tg_user_id: str):
-    """Ensure the user has provably-fair parameters (client seed, nonce, server seed + hash)."""
-    cur.execute(
-        "SELECT client_seed, nonce, server_seed, server_seed_hash FROM users WHERE tg_user_id=%s",
-        (tg_user_id,),
-    )
-    row = cur.fetchone()
-    if not row:
-        return
-
-    client_seed, nonce, server_seed, server_seed_hash = row
-    updates = {}
-
-    if client_seed is None or str(client_seed).strip() == "":
-        updates["client_seed"] = secrets.token_hex(16)
-
-    if nonce is None:
-        updates["nonce"] = 0
-
-    if server_seed is None or str(server_seed).strip() == "":
-        ss = _new_server_seed()
-        updates["server_seed"] = ss
-        updates["server_seed_hash"] = _seed_hash(ss)
-    elif server_seed_hash is None or str(server_seed_hash).strip() == "":
-        updates["server_seed_hash"] = _seed_hash(str(server_seed))
-
-    if updates:
-        sets = ", ".join([f"{k} = %s" for k in updates.keys()])
-        cur.execute(
-            f"UPDATE users SET {sets} WHERE tg_user_id = %s",
-            (*updates.values(), tg_user_id),
-        )
-
-def require_not_banned(cur, tg_user_id: str):
-    cur.execute("SELECT COALESCE(banned, FALSE) FROM users WHERE tg_user_id=%s", (tg_user_id,))
-    row = cur.fetchone()
-    if row and bool(row[0]):
-        raise HTTPException(status_code=403, detail="user is banned")
-
-def _get_idempotency_key(request: Request) -> str:
-    key = (request.headers.get("Idempotency-Key") or request.headers.get("X-Idempotency-Key") or "").strip()
-    return key[:128] if key else ""
-
-def _idem_advisory_lock(cur, tg_user_id: str, key: str):
-    # lock for the duration of the current transaction
-    cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s)::bigint)", (f"{tg_user_id}:{key}",))
-
-def _idem_get(cur, tg_user_id: str, key: str):
-    cur.execute("SELECT response FROM idempotency WHERE tg_user_id=%s AND key=%s", (tg_user_id, key))
-    row = cur.fetchone()
-    return row[0] if row else None
-
-def _idem_put(cur, tg_user_id: str, key: str, response_obj: dict):
-    cur.execute(
-        "INSERT INTO idempotency (tg_user_id, key, response, created_at) "
-        "VALUES (%s,%s,%s::jsonb,%s) "
-        "ON CONFLICT (tg_user_id, key) DO UPDATE SET response = EXCLUDED.response",
-        (tg_user_id, key, json.dumps(response_obj, ensure_ascii=False), int(time.time())),
-    )
-
-def ledger_add(cur, tg_user_id: str, delta: int, reason: str, ref: str | None = None):
-    cur.execute(
-        "INSERT INTO ledger (tg_user_id, delta, reason, ref, created_at) VALUES (%s,%s,%s,%s,%s)",
-        (tg_user_id, int(delta), str(reason), (str(ref) if ref is not None else None), int(time.time())),
-    )
-
-def cleanup_idempotency(cur):
-    # opportunistic cleanup, bounded by TTL; safe to call occasionally
-    ttl = int(IDEMPOTENCY_TTL_SEC)
-    if ttl <= 0:
-        return
-    cutoff = int(time.time()) - ttl
-    cur.execute("DELETE FROM idempotency WHERE created_at < %s", (cutoff,))
-
 def get_or_create_user(cur, tg_user_id: str, public: Optional[dict] = None) -> int:
     cur.execute(
         "INSERT INTO users (tg_user_id, balance, created_at) "
@@ -791,8 +626,6 @@ def get_or_create_user(cur, tg_user_id: str, public: Optional[dict] = None) -> i
             ),
         )
 
-    ensure_user_fairness(cur, tg_user_id)
-
     cur.execute("SELECT balance FROM users WHERE tg_user_id=%s", (tg_user_id,))
     row = cur.fetchone()
     return int(row[0]) if row else START_BALANCE
@@ -807,11 +640,20 @@ def get_balance(cur, tg_user_id: str) -> int:
     return int(row[0]) if row and row[0] is not None else 0
 
 
+def fetch_active_prizes(cur) -> list[dict]:
+    cur.execute(
+        "SELECT id, name, icon_url, cost, weight FROM prizes "
+        "WHERE is_active = TRUE AND weight > 0 "
+        "ORDER BY sort_order ASC, id ASC"
+    )
+    rows = cur.fetchall()
+    return [{"id": int(r[0]), "name": str(r[1]), "icon_url": (str(r[2]).strip() if r[2] is not None else None), "cost": int(r[3]), "weight": int(r[4])} for r in rows]
+
+
 
 def fetch_active_cases(cur) -> list[dict]:
     cur.execute(
-        "SELECT id, name, image_url, price, is_active, sort_order, created_at "
-        "FROM cases "
+        "SELECT id, name, image_url, price FROM cases "
         "WHERE is_active = TRUE "
         "ORDER BY sort_order ASC, id ASC"
     )
@@ -822,38 +664,18 @@ def fetch_active_cases(cur) -> list[dict]:
             "name": str(r[1]),
             "image_url": (str(r[2]).strip() if r[2] is not None and str(r[2]).strip() else None),
             "price": int(r[3]),
-            "is_active": bool(r[4]),
-            "sort_order": int(r[5]),
-            "created_at": int(r[6] or 0),
         }
         for r in rows
     ]
 
 
-def fetch_active_prizes(cur, case_id: Optional[int] = None) -> list[dict]:
-    if case_id is None:
-        cur.execute(
-            "SELECT id, name, icon_url, cost, weight FROM prizes "
-            "WHERE is_active = TRUE AND weight > 0 "
-            "ORDER BY sort_order ASC, id ASC"
-        )
-        rows = cur.fetchall()
-        return [
-            {
-                "id": int(r[0]),
-                "name": str(r[1]),
-                "icon_url": (str(r[2]).strip() if r[2] is not None and str(r[2]).strip() else None),
-                "cost": int(r[3]),
-                "weight": int(r[4]),
-            }
-            for r in rows
-        ]
-
+def fetch_case_prizes(cur, case_id: int) -> list[dict]:
+    # Weight can be overridden per-case; if not set, use base prize weight.
     cur.execute(
-        "SELECT p.id, p.name, p.icon_url, p.cost, cp.weight "
+        "SELECT p.id, p.name, p.icon_url, p.cost, COALESCE(cp.weight, p.weight) AS w "
         "FROM case_prizes cp "
         "JOIN prizes p ON p.id = cp.prize_id "
-        "WHERE cp.case_id = %s AND cp.is_active = TRUE AND cp.weight > 0 AND p.is_active = TRUE "
+        "WHERE cp.case_id = %s AND cp.is_active = TRUE AND p.is_active = TRUE AND COALESCE(cp.weight, p.weight) > 0 "
         "ORDER BY cp.sort_order ASC, p.sort_order ASC, p.id ASC",
         (int(case_id),),
     )
@@ -870,11 +692,19 @@ def fetch_active_prizes(cur, case_id: Optional[int] = None) -> list[dict]:
     ]
 
 
-
 # ===== Public API =====
 @app.get("/")
 def root():
     return {"ok": True}
+
+
+@app.get("/cases")
+def cases():
+    with pool.connection() as con:
+        with con:
+            with con.cursor() as cur:
+                items = fetch_active_cases(cur)
+    return {"items": items}
 
 
 @app.post("/me")
@@ -887,70 +717,6 @@ def me(req: MeReq):
                 bal = get_or_create_user(cur, uid, public)
     return {"tg_user_id": uid, "balance": int(bal)}
 
-@app.post("/fairness")
-def fairness_state(req: FairnessStateReq):
-    """Return current provably-fair commitment (server_seed_hash) and client_seed/nonce."""
-    uid = extract_tg_user_id(req.initData)
-    with pool.connection() as con:
-        with con:
-            with con.cursor() as cur:
-                public = extract_tg_user_public(req.initData)
-                get_or_create_user(cur, uid, public)
-                ensure_user_fairness(cur, uid)
-                cur.execute(
-                    "SELECT COALESCE(client_seed,''), COALESCE(nonce,0), COALESCE(server_seed_hash,'') "
-                    "FROM users WHERE tg_user_id=%s",
-                    (uid,),
-                )
-                client_seed, nonce, server_seed_hash = cur.fetchone()
-    return {"ok": True, "client_seed": str(client_seed or ""), "nonce": int(nonce or 0), "server_seed_hash": str(server_seed_hash or "")}
-
-
-@app.post("/fairness/set_client_seed")
-def fairness_set_client_seed(req: FairnessSetClientSeedReq):
-    """Set client seed used in provably-fair RNG. Resets nonce to 0."""
-    uid = extract_tg_user_id(req.initData)
-    seed = (req.client_seed or "").strip()
-    if not seed:
-        raise HTTPException(status_code=400, detail="client_seed is required")
-    if len(seed) > MAX_CLIENT_SEED_LEN:
-        seed = seed[:MAX_CLIENT_SEED_LEN]
-    with pool.connection() as con:
-        with con:
-            with con.cursor() as cur:
-                public = extract_tg_user_public(req.initData)
-                get_or_create_user(cur, uid, public)
-                require_not_banned(cur, uid)
-                ensure_user_fairness(cur, uid)
-                cur.execute(
-                    "UPDATE users SET client_seed=%s, nonce=0 WHERE tg_user_id=%s",
-                    (seed, uid),
-                )
-                cur.execute(
-                    "SELECT COALESCE(server_seed_hash,'') FROM users WHERE tg_user_id=%s",
-                    (uid,),
-                )
-                server_seed_hash = str(cur.fetchone()[0] or "")
-    return {"ok": True, "client_seed": seed, "nonce": 0, "server_seed_hash": server_seed_hash}
-
-
-
-
-
-
-
-
-@app.post("/cases")
-def cases(req: CasesReq):
-    """Public list of active cases for the frontend."""
-    uid = extract_tg_user_id(req.initData)
-    with pool.connection() as con:
-        with con:
-            with con.cursor() as cur:
-                public = extract_tg_user_public(req.initData)
-                get_or_create_user(cur, uid, public)
-                items = fetch_active_cases(cur)
-    return {"items": items}
 
 
 
@@ -958,62 +724,39 @@ def cases(req: CasesReq):
 def prizes(req: PrizesReq):
     """
     Public list of active prizes for the frontend (roulette icons, prices).
-
-    If case_id is provided, returns prizes configured for that case (case_prizes.weight).
     """
     uid = extract_tg_user_id(req.initData)
-    case_id = int(req.case_id) if req.case_id is not None else None
-
     with pool.connection() as con:
         with con:
             with con.cursor() as cur:
                 public = extract_tg_user_public(req.initData)
                 get_or_create_user(cur, uid, public)
 
-                if case_id is None:
-                    cur.execute(
-                        "SELECT id, name, cost, icon_url "
-                        "FROM prizes WHERE is_active = TRUE AND weight > 0 "
-                        "ORDER BY sort_order ASC, id ASC"
-                    )
-                    rows = cur.fetchall()
-                    items = []
-                    for r in rows:
-                        items.append(
-                            {
-                                "id": int(r[0]),
-                                "name": str(r[1]),
-                                "cost": int(r[2]),
-                                "icon_url": (str(r[3]).strip() if r[3] is not None and str(r[3]).strip() else None),
-                            }
-                        )
-                    return {"items": items}
+                # NOTE: order here is important to avoid mapping bugs
+                case_id = int(req.case_id) if getattr(req, 'case_id', None) else None
+                if case_id:
+                    rows = []  # not used
+                    items = fetch_case_prizes(cur, case_id)
+                    return {"items": [{"id": p["id"], "name": p["name"], "cost": p["cost"], "icon_url": p.get("icon_url")} for p in items]}
 
                 cur.execute(
-                    "SELECT p.id, p.name, p.cost, p.icon_url, cp.weight "
-                    "FROM case_prizes cp "
-                    "JOIN prizes p ON p.id = cp.prize_id "
-                    "WHERE cp.case_id = %s AND cp.is_active = TRUE AND cp.weight > 0 AND p.is_active = TRUE "
-                    "ORDER BY cp.sort_order ASC, p.sort_order ASC, p.id ASC",
-                    (case_id,),
+                    "SELECT id, name, cost, icon_url "
+                    "FROM prizes WHERE is_active = TRUE AND weight > 0 "
+                    "ORDER BY sort_order ASC, id ASC"
                 )
                 rows = cur.fetchall()
-
     items = []
     for r in rows:
+        # r = (id, name, cost, icon_url)
         items.append(
             {
                 "id": int(r[0]),
                 "name": str(r[1]),
                 "cost": int(r[2]),
                 "icon_url": (str(r[3]).strip() if r[3] is not None and str(r[3]).strip() else None),
-                "weight": int(r[4]),
             }
         )
     return {"items": items}
-
-
-
 
 @app.post("/inventory")
 def inventory(req: InventoryReq):
@@ -1042,57 +785,27 @@ def inventory(req: InventoryReq):
 
 
 @app.post("/inventory/sell")
-def inventory_sell(request: Request, req: InventorySellReq):
+def inventory_sell(req: InventorySellReq):
     uid = extract_tg_user_id(req.initData)
     inv_id = int(req.inventory_id)
-    idem_key = _get_idempotency_key(request)
 
     with pool.connection() as con:
         with con:
             with con.cursor() as cur:
                 public = extract_tg_user_public(req.initData)
                 get_or_create_user(cur, uid, public)
-                require_not_banned(cur, uid)
-
-                # resolve case -> authoritative bet cost
-                if case_id is not None:
-                    cur.execute("SELECT id, price FROM cases WHERE id=%s AND is_active=TRUE", (case_id,))
-                    row = cur.fetchone()
-                    if not row:
-                        raise HTTPException(status_code=404, detail="case not found")
-                    case_id = int(row[0])
-                    cost = int(row[1])
-                else:
-                    # backward-compat: map cost to a case by price if possible
-                    cur.execute(
-                        "SELECT id, price FROM cases WHERE price=%s AND is_active=TRUE ORDER BY sort_order ASC, id ASC LIMIT 1",
-                        (int(cost),),
-                    )
-                    row = cur.fetchone()
-                    if row:
-                        case_id = int(row[0])
-                        cost = int(row[1])
-                    else:
-                        raise HTTPException(status_code=400, detail="bad cost")
-
-                if idem_key:
-                    _idem_advisory_lock(cur, uid, idem_key)
-                    cached = _idem_get(cur, uid, idem_key)
-                    if cached:
-                        return cached
 
                 cur.execute(
-                    "SELECT prize_cost, COALESCE(is_locked, FALSE) "
-                    "FROM inventory WHERE id=%s AND tg_user_id=%s FOR UPDATE",
+                    "SELECT prize_cost FROM inventory WHERE id=%s AND tg_user_id=%s FOR UPDATE",
                     (inv_id, uid),
                 )
                 row = cur.fetchone()
+                if row and len(row) >= 4 and bool(row[3]):
+                    raise HTTPException(status_code=409, detail="item is locked")
                 if not row:
                     raise HTTPException(status_code=404, detail="inventory item not found")
 
                 prize_cost = int(row[0] or 0)
-                if bool(row[1]):
-                    raise HTTPException(status_code=409, detail="item is locked")
 
                 cur.execute("DELETE FROM inventory WHERE id=%s AND tg_user_id=%s", (inv_id, uid))
                 cur.execute(
@@ -1100,210 +813,105 @@ def inventory_sell(request: Request, req: InventorySellReq):
                     (prize_cost, uid),
                 )
                 bal = int(cur.fetchone()[0])
-                ledger_add(cur, uid, prize_cost, "inventory_sell", ref=str(inv_id))
 
-                resp = {"ok": True, "inventory_id": inv_id, "credited": prize_cost, "balance": bal}
-                if idem_key:
-                    _idem_put(cur, uid, idem_key, resp)
-                # cleanup occasionally, to keep the table bounded
-                if random.random() < 0.02:
-                    cleanup_idempotency(cur)
-                return resp
+    return {"ok": True, "inventory_id": inv_id, "credited": prize_cost, "balance": bal}
+
+
 
 @app.post("/inventory/withdraw")
-def inventory_withdraw(request: Request, req: InventoryWithdrawReq):
+def inventory_withdraw(req: InventoryWithdrawReq):
     """
     Withdraw inventory item:
-
-    - Regular prize (is_unique = FALSE): create a withdrawal row (status=sending), then bot sends gift via sendGift,
-      then mark withdrawal as sent and delete item from inventory.
-      This prevents duplicate sends on retries: if a withdrawal is already 'sending' or 'sent', we do not send again.
-
-    - Unique prize (is_unique = TRUE): create a claim for admins and lock the inventory item.
+      - Regular prize (is_unique = FALSE): bot sends gift via sendGift and item is removed from inventory
+      - Unique prize (is_unique = TRUE): create a claim for admins and lock the inventory item
     """
     uid = extract_tg_user_id(req.initData)
-    inv_id = int(req.inventory_id)
-    idem_key = _get_idempotency_key(request)
-
-    # Gift info used outside the first transaction
-    gift_id: str | None = None
-    is_unique: bool = False
 
     with pool.connection() as con:
-        # --- TX1: lock inventory + decide flow + create claim/withdrawal row ---
         with con:
             with con.cursor() as cur:
                 public = extract_tg_user_public(req.initData)
                 get_or_create_user(cur, uid, public)
-                require_not_banned(cur, uid)
 
-                if idem_key:
-                    _idem_advisory_lock(cur, uid, idem_key)
-                    cached = _idem_get(cur, uid, idem_key)
-                    if cached:
-                        return cached
-
-                # lock inventory row to avoid double-withdraw/sell
+                # Lock inventory row to avoid double-withdraw/sell.
+                # IMPORTANT: do not use LEFT JOIN ... FOR UPDATE (Postgres forbids locking the nullable side of an outer join).
+                # We lock the inventory row first, then read prize properties in a separate query.
                 cur.execute(
                     "SELECT id, prize_id, prize_name, prize_cost, COALESCE(is_locked, FALSE) AS is_locked "
-                    "FROM inventory WHERE id=%s AND tg_user_id=%s FOR UPDATE",
-                    (inv_id, uid),
+                    "FROM inventory "
+                    "WHERE id = %s AND tg_user_id = %s "
+                    "FOR UPDATE",
+                    (int(req.inventory_id), uid),
                 )
                 row = cur.fetchone()
                 if not row:
                     raise HTTPException(status_code=404, detail="inventory item not found")
-                _inv_id, prize_id, prize_name, prize_cost, locked = row
 
-                # prize attributes
+                inv_id, prize_id, prize_name, prize_cost, is_locked = row
+
+                # Read prize attributes (is_unique, gift_id). Prize row might be missing if admin deleted it; handle safely.
                 cur.execute(
                     "SELECT COALESCE(is_unique, FALSE) AS is_unique, COALESCE(gift_id, '') AS gift_id "
-                    "FROM prizes WHERE id=%s",
+                    "FROM prizes WHERE id = %s",
                     (int(prize_id),),
                 )
                 prow = cur.fetchone()
                 if prow:
-                    is_unique = bool(prow[0])
-                    gift_id = str(prow[1] or "").strip()
+                    is_unique, gift_id = bool(prow[0]), str(prow[1] or "")
                 else:
-                    is_unique = False
-                    gift_id = ""
+                    is_unique, gift_id = False, ""
 
-                if locked:
-                    # idempotent responses
+                if is_locked:
+                    # idempotent response for already requested unique gifts
                     cur.execute(
-                        "SELECT id, status FROM claims WHERE inventory_id=%s ORDER BY created_at DESC LIMIT 1",
-                        (inv_id,),
+                        "SELECT id, status FROM claims WHERE inventory_id = %s ORDER BY created_at DESC LIMIT 1",
+                        (int(inv_id),),
                     )
                     c = cur.fetchone()
                     if c:
-                        resp = {"ok": True, "status": str(c[1]), "message": "Заявка уже существует."}
-                        if idem_key:
-                            _idem_put(cur, uid, idem_key, resp)
-                        return resp
-
-                    cur.execute(
-                        "SELECT status FROM withdrawals WHERE inventory_id=%s ORDER BY created_at DESC LIMIT 1",
-                        (inv_id,),
-                    )
-                    w = cur.fetchone()
-                    if w:
-                        st = str(w[0])
-                        resp = {"ok": True, "status": st, "message": "Вывод уже в обработке." if st == "sending" else "Подарок уже отправлен."}
-                        if idem_key:
-                            _idem_put(cur, uid, idem_key, resp)
-                        return resp
-
+                        return {"ok": True, "status": str(c[1]), "message": "Заявка уже существует."}
                     raise HTTPException(status_code=409, detail="item is locked")
 
-                if is_unique:
+                if bool(is_unique):
                     now = int(time.time())
+                    # create claim
                     cur.execute(
                         "INSERT INTO claims (tg_user_id, inventory_id, prize_id, prize_name, prize_cost, status, created_at) "
                         "VALUES (%s,%s,%s,%s,%s,'pending',%s) RETURNING id",
-                        (uid, inv_id, int(prize_id), str(prize_name), int(prize_cost), now),
+                        (uid, int(inv_id), int(prize_id), str(prize_name), int(prize_cost), now),
                     )
                     claim_id = int(cur.fetchone()[0])
+                    # lock item in inventory until admins process
                     cur.execute(
-                        "UPDATE inventory SET is_locked = TRUE, locked_reason = 'claim_pending' WHERE id=%s",
-                        (inv_id,),
+                        "UPDATE inventory SET is_locked = TRUE, locked_reason = 'claim_pending' WHERE id = %s",
+                        (int(inv_id),),
                     )
-                    resp = {"ok": True, "status": "pending", "claim_id": claim_id, "message": "Заявка на уникальный подарок создана."}
-                    if idem_key:
-                        _idem_put(cur, uid, idem_key, resp)
-                    return resp
+                    return {"ok": True, "status": "pending", "claim_id": claim_id, "message": "Заявка на уникальный подарок создана."}
 
-                # regular gifts
-                if not gift_id:
+                # regular gifts: send by bot
+                gid = (gift_id or "").strip()
+                if not gid:
                     raise HTTPException(status_code=400, detail="gift_id is not configured for this prize")
 
-                # prevent double-send via withdrawal row (unique per inventory_id)
-                now = int(time.time())
-                cur.execute("SELECT status FROM withdrawals WHERE inventory_id=%s FOR UPDATE", (inv_id,))
-                w = cur.fetchone()
-                if w:
-                    st = str(w[0])
-                    if st == "sent":
-                        # inventory should already be deleted, but be tolerant
-                        cur.execute("DELETE FROM inventory WHERE id=%s AND tg_user_id=%s", (inv_id, uid))
-                        resp = {"ok": True, "status": "sent", "message": "Подарок уже отправлен."}
-                        if idem_key:
-                            _idem_put(cur, uid, idem_key, resp)
-                        return resp
-                    if st == "sending":
-                        resp = {"ok": True, "status": "sending", "message": "Отправка в процессе. Попробуйте позже."}
-                        if idem_key:
-                            _idem_put(cur, uid, idem_key, resp)
-                        return resp
-                    # failed -> allow retry
-                    cur.execute("UPDATE withdrawals SET status='sending', updated_at=%s WHERE inventory_id=%s", (now, inv_id))
-                else:
-                    cur.execute(
-                        "INSERT INTO withdrawals (tg_user_id, inventory_id, prize_id, gift_id, status, created_at) "
-                        "VALUES (%s,%s,%s,%s,'sending',%s)",
-                        (uid, inv_id, int(prize_id), gift_id, now),
-                    )
+                # Bot API: sendGift supports user_id or chat_id. Use user_id for private users.
+                tg_api("sendGift", {"gift_id": gid, "user_id": int(uid)})
 
-                # lock inventory while sending
-                cur.execute("UPDATE inventory SET is_locked = TRUE, locked_reason = 'withdraw_sending' WHERE id=%s", (inv_id,))
+                # remove from inventory
+                cur.execute("DELETE FROM inventory WHERE id = %s AND tg_user_id = %s", (int(inv_id), uid))
 
-        # --- external call (no DB locks) ---
-        # Only real Telegram users can receive gifts
-        try:
-            user_int = int(uid)
-        except Exception:
-            # mark failed
-            with con:
-                with con.cursor() as cur:
-                    cur.execute(
-                        "UPDATE withdrawals SET status='failed', telegram_result=%s, updated_at=%s WHERE inventory_id=%s",
-                        ("invalid user_id", int(time.time()), inv_id),
-                    )
-                    cur.execute("UPDATE inventory SET is_locked = FALSE, locked_reason = NULL WHERE id=%s", (inv_id,))
-            raise HTTPException(status_code=400, detail="cannot withdraw for this user")
+                bal = get_balance(cur, uid)
+                return {"ok": True, "status": "sent", "message": "Подарок отправлен ботом.", "balance": int(bal)}
 
-        send_ok = False
-        send_result = None
-        send_err = None
-        try:
-            send_result = tg_api("sendGift", {"gift_id": gift_id, "user_id": user_int})
-            send_ok = True
-        except HTTPException as e:
-            send_err = str(e.detail)
-        except Exception as e:
-            send_err = str(e)
-
-        # --- TX2: finalize state ---
-        with con:
-            with con.cursor() as cur:
-                if send_ok:
-                    cur.execute(
-                        "UPDATE withdrawals SET status='sent', telegram_result=%s, updated_at=%s WHERE inventory_id=%s",
-                        (json.dumps(send_result, ensure_ascii=False), int(time.time()), inv_id),
-                    )
-                    cur.execute("DELETE FROM inventory WHERE id=%s AND tg_user_id=%s", (inv_id, uid))
-                    resp = {"ok": True, "status": "sent", "message": "Подарок отправлен ботом."}
-                else:
-                    cur.execute(
-                        "UPDATE withdrawals SET status='failed', telegram_result=%s, updated_at=%s WHERE inventory_id=%s",
-                        (send_err or "sendGift failed", int(time.time()), inv_id),
-                    )
-                    cur.execute("UPDATE inventory SET is_locked = FALSE, locked_reason = NULL WHERE id=%s", (inv_id,))
-                    resp = {"ok": False, "status": "failed", "message": "Не удалось отправить подарок. Попробуйте позже."}
-
-                if idem_key:
-                    _idem_put(cur, uid, idem_key, resp)
-                if random.random() < 0.02:
-                    cleanup_idempotency(cur)
-
-        return resp
 
 @app.post("/spin")
-def spin(request: Request, req: SpinReq):
+def spin(req: SpinReq):
     uid = extract_tg_user_id(req.initData)
-    case_id = int(req.case_id) if req.case_id is not None else None
+    case_id = int(req.case_id) if getattr(req, 'case_id', None) else None
+    # Backward compatibility: if case_id is not provided, we still allow old 'cost' values.
     cost = int(req.cost or 25)
+    if case_id is None and cost not in (25, 50):
+        raise HTTPException(status_code=400, detail="bad cost")
 
-    idem_key = _get_idempotency_key(request)
     spin_id = str(uuid.uuid4())
     now = int(time.time())
 
@@ -1312,166 +920,63 @@ def spin(request: Request, req: SpinReq):
             with con.cursor() as cur:
                 public = extract_tg_user_public(req.initData)
                 get_or_create_user(cur, uid, public)
-                require_not_banned(cur, uid)
 
-                if idem_key:
-                    _idem_advisory_lock(cur, uid, idem_key)
-                    cached = _idem_get(cur, uid, idem_key)
-                    if cached:
-                        return cached
-
-                if REQUIRE_CLAIM_BEFORE_NEXT_SPIN:
+                case_name = None
+                bet_cost = cost
+                prizes = None
+                if case_id is not None:
                     cur.execute(
-                        "SELECT spin_id FROM spins WHERE tg_user_id=%s AND status='pending' ORDER BY created_at DESC LIMIT 1",
-                        (uid,),
+                        "SELECT id, name, price FROM cases WHERE id=%s AND is_active=TRUE",
+                        (case_id,),
                     )
-                    pending = cur.fetchone()
-                    if pending:
-                        raise HTTPException(status_code=409, detail=f"pending spin exists: {pending[0]}")
+                    rowc = cur.fetchone()
+                    if not rowc:
+                        raise HTTPException(status_code=404, detail="case not found")
+                    case_id_db = int(rowc[0])
+                    case_name = str(rowc[1])
+                    bet_cost = int(rowc[2])
+                    prizes = fetch_case_prizes(cur, case_id_db)
+                    if not prizes:
+                        prizes = fetch_active_prizes(cur)
+                    case_id = case_id_db
 
-                # lock user row to do fair RNG + balance update atomically
+                # списываем ставку атомарно
                 cur.execute(
-                    "SELECT balance, COALESCE(nonce,0), COALESCE(client_seed,''), COALESCE(server_seed,''), "
-                    "COALESCE(server_seed_hash,''), COALESCE(last_spin_at,0) "
-                    "FROM users WHERE tg_user_id=%s FOR UPDATE",
-                    (uid,),
+                    "UPDATE users SET balance = balance - %s "
+                    "WHERE tg_user_id=%s AND balance >= %s "
+                    "RETURNING balance",
+                    (bet_cost, uid, bet_cost),
                 )
-                u = cur.fetchone()
-                if not u:
-                    raise HTTPException(status_code=500, detail="user missing")
-                balance, nonce, client_seed, server_seed, server_seed_hash, last_spin_at = u
-                balance = int(balance or 0)
-                nonce = int(nonce or 0)
-                client_seed = str(client_seed or "").strip()
-                server_seed = str(server_seed or "").strip()
-                server_seed_hash = str(server_seed_hash or "").strip()
-                last_spin_at = int(last_spin_at or 0)
-
-                # ensure seeds exist
-                if not client_seed or not server_seed or not server_seed_hash:
-                    ensure_user_fairness(cur, uid)
-                    cur.execute(
-                        "SELECT COALESCE(nonce,0), COALESCE(client_seed,''), COALESCE(server_seed,''), COALESCE(server_seed_hash,'') "
-                        "FROM users WHERE tg_user_id=%s FOR UPDATE",
-                        (uid,),
-                    )
-                    nonce, client_seed, server_seed, server_seed_hash = cur.fetchone()
-                    nonce = int(nonce or 0)
-                    client_seed = str(client_seed or "").strip()
-                    server_seed = str(server_seed or "").strip()
-                    server_seed_hash = str(server_seed_hash or "").strip()
-
-                # cooldown
-                if SPIN_COOLDOWN_SEC > 0 and last_spin_at and (now - last_spin_at) < SPIN_COOLDOWN_SEC:
-                    raise HTTPException(status_code=429, detail="too many spins; slow down")
-
-                # funds
-                if balance < cost:
+                row = cur.fetchone()
+                if not row:
                     raise HTTPException(status_code=402, detail="not enough balance")
+                new_balance = int(row[0])
+                if prizes is None:
+                    prizes = fetch_active_prizes(cur)
+                    if not prizes:
+                        # fallback (если таблица пуста/всё отключено)
+                        prizes = [{"id": p["id"], "name": p["name"], "cost": p["cost"], "weight": p["weight"]} for p in DEFAULT_PRIZES]
 
-                # provably fair RNG: HMAC_SHA256(server_seed, "{uid}|{client_seed}|{nonce}|{cost}")
-                msg = f"{uid}|{client_seed}|{nonce}|{cost}".encode("utf-8")
-                digest = hmac.new(server_seed.encode("utf-8"), msg, hashlib.sha256).digest()
-                rng_int = int.from_bytes(digest, "big")
-                rng_hex = digest.hex()
+                prize = random.choices(prizes, weights=[p["weight"] for p in prizes], k=1)[0]
 
-                prizes = fetch_active_prizes(cur, case_id)
-                if not prizes:
-                    prizes = [{"id": p["id"], "name": p["name"], "icon_url": (p.get("icon_url") or None), "cost": p["cost"], "weight": p["weight"]} for p in DEFAULT_PRIZES]
-
-                total_w = sum(int(p["weight"]) for p in prizes)
-                if total_w <= 0:
-                    raise HTTPException(status_code=500, detail="no active prizes")
-                pick = rng_int % total_w
-                chosen = None
-                acc = 0
-                for p in prizes:
-                    w = int(p["weight"])
-                    acc += w
-                    if pick < acc:
-                        chosen = p
-                        break
-                if not chosen:
-                    chosen = prizes[-1]
-
-                # rotate server seed for next spin (commit via hash)
-                next_server_seed = _new_server_seed()
-                next_server_seed_hash = _seed_hash(next_server_seed)
-
-                # apply user accounting
-                new_balance = balance - cost
                 cur.execute(
-                    "UPDATE users SET balance=%s, nonce=%s, last_spin_at=%s, server_seed=%s, server_seed_hash=%s "
-                    "WHERE tg_user_id=%s",
-                    (new_balance, nonce + 1, now, next_server_seed, next_server_seed_hash, uid),
+                    "INSERT INTO spins (spin_id, tg_user_id, bet_cost, case_id, case_name, prize_id, prize_name, prize_cost, status, created_at) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'pending',%s)",
+                    (spin_id, uid, bet_cost, case_id, case_name, int(prize["id"]), str(prize["name"]), int(prize["cost"]), now),
                 )
 
-                # persist spin + accounting
-                cur.execute(
-                    "INSERT INTO spins (spin_id, tg_user_id, case_id, bet_cost, prize_id, prize_name, prize_cost, status, created_at, "
-                    "nonce, client_seed, server_seed, server_seed_hash, rng_hex) "
-                    "VALUES (%s,%s,%s,%s,%s,%s,%s,'pending',%s,%s,%s,%s,%s,%s)",
-                    (
-                        spin_id,
-                        uid,
-                        (case_id if case_id is not None else None),
-                        cost,
-                        int(chosen["id"]),
-                        str(chosen["name"]),
-                        int(chosen["cost"]),
-                        now,
-                        nonce,
-                        client_seed,
-                        server_seed,
-                        server_seed_hash,
-                        rng_hex,
-                    ),
-                )
-                ledger_add(cur, uid, -cost, "spin_cost", ref=spin_id)
+    return {"spin_id": spin_id, "case_id": case_id, "case_name": case_name, "bet_cost": int(bet_cost), "id": int(prize["id"]), "name": str(prize["name"]), "icon_url": (prize.get("icon_url") or None), "cost": int(prize["cost"]), "balance": int(new_balance)}
 
-                resp = {
-                    "spin_id": spin_id,
-                    "case_id": case_id,
-                    "bet_cost": int(cost),
-                    "id": int(chosen["id"]),
-                    "name": str(chosen["name"]),
-                    "icon_url": (chosen.get("icon_url") or None),
-                    "cost": int(chosen["cost"]),
-                    "balance": int(new_balance),
-                    "fair": {
-                        "client_seed": client_seed,
-                        "nonce": int(nonce),
-                        "server_seed_hash": server_seed_hash,
-                        "server_seed": server_seed,
-                        "rng_hex": rng_hex,
-                        "next_server_seed_hash": next_server_seed_hash,
-                    },
-                }
-
-                if idem_key:
-                    _idem_put(cur, uid, idem_key, resp)
-                if random.random() < 0.02:
-                    cleanup_idempotency(cur)
-
-                return resp
 
 @app.post("/claim")
-def claim(request: Request, req: ClaimReq):
+def claim(req: ClaimReq):
     uid = extract_tg_user_id(req.initData)
-    idem_key = _get_idempotency_key(request)
 
     with pool.connection() as con:
         with con:
             with con.cursor() as cur:
                 public = extract_tg_user_public(req.initData)
                 get_or_create_user(cur, uid, public)
-                require_not_banned(cur, uid)
-
-                if idem_key:
-                    _idem_advisory_lock(cur, uid, idem_key)
-                    cached = _idem_get(cur, uid, idem_key)
-                    if cached:
-                        return cached
 
                 cur.execute(
                     "SELECT prize_id, prize_name, prize_cost, status "
@@ -1487,10 +992,7 @@ def claim(request: Request, req: ClaimReq):
                 if status in ("sold", "kept"):
                     cur.execute("SELECT balance FROM users WHERE tg_user_id=%s", (uid,))
                     bal = int(cur.fetchone()[0])
-                    resp = {"ok": True, "status": status, "balance": bal}
-                    if idem_key:
-                        _idem_put(cur, uid, idem_key, resp)
-                    return resp
+                    return {"ok": True, "status": status, "balance": bal}
 
                 if req.action == "sell":
                     cur.execute(
@@ -1499,13 +1001,7 @@ def claim(request: Request, req: ClaimReq):
                     )
                     bal = int(cur.fetchone()[0])
                     cur.execute("UPDATE spins SET status='sold' WHERE spin_id=%s", (req.spin_id,))
-                    ledger_add(cur, uid, prize_cost, "spin_sell", ref=str(req.spin_id))
-                    resp = {"ok": True, "status": "sold", "balance": bal, "credited": prize_cost}
-                    if idem_key:
-                        _idem_put(cur, uid, idem_key, resp)
-                    if random.random() < 0.02:
-                        cleanup_idempotency(cur)
-                    return resp
+                    return {"ok": True, "status": "sold", "balance": bal, "credited": prize_cost}
 
                 # keep
                 cur.execute(
@@ -1516,12 +1012,8 @@ def claim(request: Request, req: ClaimReq):
                 cur.execute("UPDATE spins SET status='kept' WHERE spin_id=%s", (req.spin_id,))
                 cur.execute("SELECT balance FROM users WHERE tg_user_id=%s", (uid,))
                 bal = int(cur.fetchone()[0])
-                resp = {"ok": True, "status": "kept", "balance": bal}
-                if idem_key:
-                    _idem_put(cur, uid, idem_key, resp)
-                if random.random() < 0.02:
-                    cleanup_idempotency(cur)
-                return resp
+                return {"ok": True, "status": "kept", "balance": bal}
+
 
 @app.post("/leaderboard")
 def leaderboard(req: LeaderboardReq):
@@ -1607,15 +1099,12 @@ def recent_wins(req: MeReq):
 
 
 @app.post("/topup/create")
-def topup_create(request: Request, req: TopupCreateReq):
+def topup_create(req: TopupCreateReq):
     uid = extract_tg_user_id(req.initData)
     stars = int(req.stars or 0)
     if stars < 1 or stars > 10000:
         raise HTTPException(status_code=400, detail="bad stars amount")
 
-    idem_key = _get_idempotency_key(request)
-
-    # Create unique payload per invoice
     payload = f"topup:{uid}:{uuid.uuid4()}"
     now = int(time.time())
 
@@ -1624,14 +1113,6 @@ def topup_create(request: Request, req: TopupCreateReq):
             with con.cursor() as cur:
                 public = extract_tg_user_public(req.initData)
                 get_or_create_user(cur, uid, public)
-                require_not_banned(cur, uid)
-
-                if idem_key:
-                    _idem_advisory_lock(cur, uid, idem_key)
-                    cached = _idem_get(cur, uid, idem_key)
-                    if cached:
-                        return cached
-
                 cur.execute(
                     "INSERT INTO topups (tg_user_id, payload, stars_amount, status, created_at) "
                     "VALUES (%s,%s,%s,'created',%s)",
@@ -1647,18 +1128,8 @@ def topup_create(request: Request, req: TopupCreateReq):
         "prices": [{"label": f"+{stars} ⭐", "amount": stars}],
     })
 
-    resp = {"invoice_link": invoice_link, "payload": payload, "stars": stars}
+    return {"invoice_link": invoice_link, "payload": payload}
 
-    if idem_key:
-        with pool.connection() as con:
-            with con:
-                with con.cursor() as cur:
-                    _idem_advisory_lock(cur, uid, idem_key)
-                    _idem_put(cur, uid, idem_key, resp)
-                    if random.random() < 0.02:
-                        cleanup_idempotency(cur)
-
-    return resp
 
 @app.post("/tg/webhook")
 async def tg_webhook(request: Request):
@@ -1762,7 +1233,6 @@ async def tg_webhook(request: Request):
                         return {"ok": True}
 
                     cur.execute("UPDATE users SET balance = balance + %s WHERE tg_user_id=%s", (expected, uid))
-                    ledger_add(cur, uid, expected, "topup_paid", ref=invoice_payload)
                     cur.execute(
                         "UPDATE topups SET status='paid', telegram_charge_id=%s, paid_at=%s WHERE payload=%s",
                         (telegram_charge_id, int(time.time()), invoice_payload),
@@ -1974,7 +1444,6 @@ def admin_reconcile_star_transactions(request: Request, limit: int = 200):
 
                     # Apply the same accounting as in webhook
                     cur.execute("UPDATE users SET balance = balance + %s WHERE tg_user_id=%s", (expected, uid))
-                    ledger_add(cur, uid, expected, "topup_reconcile", ref=payload)
                     cur.execute(
                         "UPDATE topups SET status='paid', telegram_charge_id=%s, paid_at=%s WHERE payload=%s",
                         (tx_id or None, int(time.time()), payload),
@@ -2056,70 +1525,6 @@ def admin_user(request: Request, tg_user_id: str):
     }
 
 
-@app.post("/admin/ban/{tg_user_id}")
-def admin_ban_user(request: Request, tg_user_id: str):
-    require_admin(request)
-    with pool.connection() as con:
-        with con:
-            with con.cursor() as cur:
-                get_or_create_user(cur, tg_user_id)
-                cur.execute("UPDATE users SET banned=TRUE WHERE tg_user_id=%s", (tg_user_id,))
-    return {"ok": True, "tg_user_id": tg_user_id, "banned": True}
-
-
-@app.post("/admin/unban/{tg_user_id}")
-def admin_unban_user(request: Request, tg_user_id: str):
-    require_admin(request)
-    with pool.connection() as con:
-        with con:
-            with con.cursor() as cur:
-                get_or_create_user(cur, tg_user_id)
-                cur.execute("UPDATE users SET banned=FALSE WHERE tg_user_id=%s", (tg_user_id,))
-    return {"ok": True, "tg_user_id": tg_user_id, "banned": False}
-
-
-@app.get("/admin/ledger/{tg_user_id}")
-def admin_ledger(request: Request, tg_user_id: str, limit: int = Query(200, ge=1, le=1000)):
-    require_admin(request)
-    with pool.connection() as con:
-        with con:
-            with con.cursor() as cur:
-                cur.execute(
-                    "SELECT id, delta, reason, ref, created_at FROM ledger "
-                    "WHERE tg_user_id=%s ORDER BY id DESC LIMIT %s",
-                    (tg_user_id, int(limit)),
-                )
-                rows = cur.fetchall()
-    return {"items": [{"id": int(r[0]), "delta": int(r[1]), "reason": str(r[2]), "ref": (r[3] or None), "created_at": int(r[4])} for r in rows]}
-
-
-@app.get("/admin/withdrawals")
-def admin_withdrawals(request: Request, status: str = Query("", description="sending|sent|failed or empty for all"), limit: int = Query(200, ge=1, le=1000)):
-    require_admin(request)
-    st = (status or "").strip()
-    with pool.connection() as con:
-        with con:
-            with con.cursor() as cur:
-                cur.execute(
-                    "SELECT w.id, w.tg_user_id, w.inventory_id, w.prize_id, w.gift_id, w.status, w.telegram_result, w.created_at, w.updated_at "
-                    "FROM withdrawals w "
-                    "WHERE (%s = '' OR w.status = %s) "
-                    "ORDER BY w.created_at DESC LIMIT %s",
-                    (st, st, int(limit)),
-                )
-                rows = cur.fetchall()
-    return {"items": [{
-        "id": int(r[0]),
-        "tg_user_id": str(r[1]),
-        "inventory_id": int(r[2]),
-        "prize_id": int(r[3]),
-        "gift_id": str(r[4]),
-        "status": str(r[5]),
-        "telegram_result": r[6],
-        "created_at": int(r[7]),
-        "updated_at": int(r[8] or 0) or None,
-    } for r in rows]}
-
 @app.post("/admin/adjust_balance")
 def admin_adjust_balance(request: Request, req: AdminAdjustReq):
     require_admin(request)
@@ -2136,9 +1541,9 @@ def admin_adjust_balance(request: Request, req: AdminAdjustReq):
                     (delta, uid),
                 )
                 bal = int(cur.fetchone()[0])
-                ledger_add(cur, uid, delta, "admin_adjust")
 
     return {"ok": True, "tg_user_id": uid, "balance": bal, "delta": delta}
+
 
 # ===== Admin: CRUD prizes =====
 @app.get("/admin/prizes")
@@ -2183,16 +1588,6 @@ def admin_create_prize(request: Request, req: PrizeIn):
                     "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                     (new_id, req.name, (req.icon_url or None), int(req.cost), int(req.weight), bool(req.is_active), int(req.sort_order), now, (req.gift_id or None), bool(req.is_unique)),
                 )
-                # auto-map new prize into all existing cases (default: use prize weight/sort)
-                cur.execute("SELECT id FROM cases")
-                cids = [int(r[0]) for r in cur.fetchall()]
-                for cid in cids:
-                    cur.execute(
-                        "INSERT INTO case_prizes (case_id, prize_id, weight, is_active, sort_order, created_at) "
-                        "VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT (case_id, prize_id) DO NOTHING",
-                        (cid, new_id, int(req.weight), bool(req.is_active), int(req.sort_order or 0), now),
-                    )
-
     return {"id": new_id, "created_at": now, **req.model_dump()}
 
 
@@ -2226,21 +1621,23 @@ def admin_delete_prize(request: Request, prize_id: int):
                     raise HTTPException(status_code=404, detail="prize not found")
     return {"ok": True, "deleted": int(prize_id)}
 
-# ===== Admin: Cases =====
+
+
+
+
 @app.get("/admin/cases")
-def admin_list_cases(request: Request):
+def admin_cases(request: Request):
     require_admin(request)
     with pool.connection() as con:
         with con:
             with con.cursor() as cur:
                 cur.execute(
-                    "SELECT id, name, image_url, price, is_active, sort_order, created_at "
+                    "SELECT id, name, image_url, price, is_active, sort_order, created_at, updated_at "
                     "FROM cases ORDER BY sort_order ASC, id ASC"
                 )
                 rows = cur.fetchall()
-    items = []
-    for r in rows:
-        items.append(
+    return {
+        "items": [
             {
                 "id": int(r[0]),
                 "name": str(r[1]),
@@ -2248,94 +1645,78 @@ def admin_list_cases(request: Request):
                 "price": int(r[3]),
                 "is_active": bool(r[4]),
                 "sort_order": int(r[5]),
-                "created_at": int(r[6] or 0),
+                "created_at": int(r[6]) if r[6] is not None else None,
+                "updated_at": int(r[7]) if r[7] is not None else None,
             }
-        )
-    return {"items": items}
+            for r in rows
+        ]
+    }
+
+
+class AdminCaseUpsert(BaseModel):
+    id: Optional[int] = None
+    name: str
+    image_url: Optional[str] = None
+    price: int
+    is_active: bool = True
+    sort_order: int = 0
 
 
 @app.post("/admin/cases")
-def admin_create_case(request: Request, case: CaseIn):
+def admin_cases_upsert(req: AdminCaseUpsert, request: Request):
     require_admin(request)
+    now = int(time.time())
     with pool.connection() as con:
         with con:
             with con.cursor() as cur:
-                now = int(time.time())
+                case_id = int(req.id) if req.id is not None else None
+                if case_id is None:
+                    cur.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM cases")
+                    case_id = int(cur.fetchone()[0])
                 cur.execute(
-                    "INSERT INTO cases (name, image_url, price, is_active, sort_order, created_at) "
-                    "VALUES (%s,%s,%s,%s,%s,%s) RETURNING id",
+                    "INSERT INTO cases (id, name, image_url, price, is_active, sort_order, created_at, updated_at) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,COALESCE((SELECT created_at FROM cases WHERE id=%s), %s), %s) "
+                    "ON CONFLICT (id) DO UPDATE SET "
+                    "name=EXCLUDED.name, image_url=EXCLUDED.image_url, price=EXCLUDED.price, "
+                    "is_active=EXCLUDED.is_active, sort_order=EXCLUDED.sort_order, updated_at=EXCLUDED.updated_at",
                     (
-                        case.name,
-                        (case.image_url.strip() if case.image_url else None),
-                        int(case.price),
-                        bool(case.is_active),
-                        int(case.sort_order or 0),
+                        case_id,
+                        req.name.strip(),
+                        (req.image_url.strip() if req.image_url and req.image_url.strip() else None),
+                        int(req.price),
+                        bool(req.is_active),
+                        int(req.sort_order),
+                        case_id,
+                        now,
                         now,
                     ),
                 )
-                cid = int(cur.fetchone()[0])
-
-                # auto-map all existing prizes with their default weights
-                cur.execute(
-                    "INSERT INTO case_prizes (case_id, prize_id, weight, is_active, sort_order, created_at) "
-                    "SELECT %s, p.id, p.weight, p.is_active, p.sort_order, %s FROM prizes p "
-                    "ON CONFLICT (case_id, prize_id) DO NOTHING",
-                    (cid, now),
-                )
-
-    return {"ok": True, "id": cid}
-
-
-@app.put("/admin/cases/{case_id}")
-def admin_update_case(request: Request, case_id: int, case: CaseIn):
-    require_admin(request)
-    with pool.connection() as con:
-        with con:
-            with con.cursor() as cur:
-                cur.execute(
-                    "UPDATE cases SET name=%s, image_url=%s, price=%s, is_active=%s, sort_order=%s "
-                    "WHERE id=%s RETURNING id",
-                    (
-                        case.name,
-                        (case.image_url.strip() if case.image_url else None),
-                        int(case.price),
-                        bool(case.is_active),
-                        int(case.sort_order or 0),
-                        int(case_id),
-                    ),
-                )
-                row = cur.fetchone()
-                if not row:
-                    raise HTTPException(status_code=404, detail="case not found")
-    return {"ok": True, "id": int(case_id)}
+    return {"ok": True, "id": case_id}
 
 
 @app.delete("/admin/cases/{case_id}")
-def admin_delete_case(request: Request, case_id: int):
+def admin_cases_delete(case_id: int, request: Request):
     require_admin(request)
     with pool.connection() as con:
         with con:
             with con.cursor() as cur:
-                cur.execute("DELETE FROM cases WHERE id=%s RETURNING id", (int(case_id),))
-                row = cur.fetchone()
-                if not row:
-                    raise HTTPException(status_code=404, detail="case not found")
-    return {"ok": True, "deleted": int(case_id)}
+                cur.execute("DELETE FROM cases WHERE id=%s", (int(case_id),))
+    return {"ok": True}
 
 
 @app.get("/admin/cases/{case_id}/prizes")
-def admin_case_prizes(request: Request, case_id: int):
+def admin_case_prizes(case_id: int, request: Request):
     require_admin(request)
     with pool.connection() as con:
         with con:
             with con.cursor() as cur:
+                # show all prizes with per-case settings (if any)
                 cur.execute(
-                    "SELECT p.id, p.name, p.icon_url, p.cost, p.is_active, p.sort_order, "
-                    "COALESCE(cp.weight, 0) AS case_weight, COALESCE(cp.is_active, FALSE) AS case_active, "
-                    "COALESCE(cp.sort_order, p.sort_order) AS case_sort "
+                    "SELECT p.id, p.name, p.cost, p.icon_url, p.weight, p.is_active, p.sort_order, "
+                    "cp.weight, cp.is_active, cp.sort_order "
                     "FROM prizes p "
                     "LEFT JOIN case_prizes cp ON cp.prize_id=p.id AND cp.case_id=%s "
-                    "ORDER BY case_sort ASC, p.id ASC",
+                    "ORDER BY p.sort_order ASC, p.id ASC",
                     (int(case_id),),
                 )
                 rows = cur.fetchall()
@@ -2345,49 +1726,61 @@ def admin_case_prizes(request: Request, case_id: int):
             {
                 "prize_id": int(r[0]),
                 "name": str(r[1]),
-                "icon_url": (str(r[2]).strip() if r[2] is not None and str(r[2]).strip() else None),
-                "cost": int(r[3]),
-                "prize_active": bool(r[4]),
-                "prize_sort": int(r[5]),
-                "weight": int(r[6] or 0),
-                "is_active": bool(r[7]),
-                "sort_order": int(r[8] or 0),
+                "cost": int(r[2]),
+                "icon_url": (str(r[3]).strip() if r[3] is not None and str(r[3]).strip() else None),
+                "base_weight": int(r[4]),
+                "base_active": bool(r[5]),
+                "base_sort_order": int(r[6]),
+                "case_weight": (int(r[7]) if r[7] is not None else None),
+                "case_is_active": (bool(r[8]) if r[8] is not None else False),
+                "case_sort_order": (int(r[9]) if r[9] is not None else int(r[6])),
+                "in_case": (r[8] is not None),
             }
         )
     return {"items": items}
 
 
-@app.post("/admin/cases/{case_id}/prizes")
-def admin_replace_case_prizes(request: Request, case_id: int, body: CasePrizesReplaceReq):
+class AdminCasePrizeItem(BaseModel):
+    prize_id: int
+    weight: Optional[int] = None
+    is_active: bool = True
+    sort_order: int = 0
+
+
+class AdminCasePrizesUpsert(BaseModel):
+    items: list[AdminCasePrizeItem]
+
+
+@app.put("/admin/cases/{case_id}/prizes")
+def admin_case_prizes_upsert(case_id: int, req: AdminCasePrizesUpsert, request: Request):
     require_admin(request)
-    items = body.items or []
+    now = int(time.time())
     with pool.connection() as con:
         with con:
             with con.cursor() as cur:
-                cur.execute("SELECT id FROM cases WHERE id=%s", (int(case_id),))
+                # ensure case exists
+                cur.execute("SELECT 1 FROM cases WHERE id=%s", (int(case_id),))
                 if not cur.fetchone():
                     raise HTTPException(status_code=404, detail="case not found")
 
-                now = int(time.time())
-                cur.execute("DELETE FROM case_prizes WHERE case_id=%s", (int(case_id),))
-                for it in items:
+                # upsert provided items
+                for it in req.items:
                     cur.execute(
-                        "INSERT INTO case_prizes (case_id, prize_id, weight, is_active, sort_order, created_at) "
-                        "VALUES (%s,%s,%s,%s,%s,%s)",
+                        "INSERT INTO case_prizes (case_id, prize_id, weight, is_active, sort_order, created_at, updated_at) "
+                        "VALUES (%s,%s,%s,%s,%s,%s,%s) "
+                        "ON CONFLICT (case_id, prize_id) DO UPDATE SET "
+                        "weight=EXCLUDED.weight, is_active=EXCLUDED.is_active, sort_order=EXCLUDED.sort_order, updated_at=EXCLUDED.updated_at",
                         (
                             int(case_id),
                             int(it.prize_id),
-                            int(it.weight),
+                            (int(it.weight) if it.weight is not None else None),
                             bool(it.is_active),
-                            int(it.sort_order or 0),
+                            int(it.sort_order),
+                            now,
                             now,
                         ),
                     )
     return {"ok": True}
-
-
-
-
 
 
 @app.get("/admin/claims")

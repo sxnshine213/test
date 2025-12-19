@@ -339,45 +339,13 @@
     .recent-win__prize-icon{width:14px;height:14px;border-radius:3px;object-fit:cover;margin-right:6px;vertical-align:middle;}
 
   
-/* ===== Cases selector ===== */
-.casesBar{
-  display:flex;
-  gap:10px;
-  padding: 12px 16px 4px;
-  overflow-x:auto;
-  scrollbar-width:none;
-  -webkit-overflow-scrolling:touch;
-}
-.casesBar::-webkit-scrollbar{ display:none; }
-.caseCard{
-  min-width: 168px;
-  background:#162235;
-  border:1px solid #1f324a;
-  border-radius:16px;
-  padding:10px;
-  cursor:pointer;
-  user-select:none;
-  -webkit-user-select:none;
-  transition: transform .08s ease, border-color .08s ease;
-}
-.caseCard:active{ transform: scale(0.99); }
-.caseCard.active{ border-color:#5b8ecb; box-shadow:0 0 0 2px rgba(91,142,203,.25) inset; }
-.caseImg{
-  width:100%;
-  height:92px;
-  border-radius:12px;
-  background:#0b1320;
-  border:1px dashed #1f324a;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  overflow:hidden;
-  margin-bottom:8px;
-  opacity:.95;
-}
-.caseImg img{ width:100%; height:100%; object-fit:cover; display:block; }
-.caseName{ font-weight:900; font-size:14px; margin:0 0 4px 0; }
-.casePrice{ opacity:.85; font-size:13px; }
+    /* ===== Cases grid ===== */
+    .cases { display:grid; grid-template-columns:repeat(2, 1fr); gap:10px; margin-bottom:12px; }
+    .case-card { background:#162235; border-radius:14px; padding:10px; cursor:pointer; user-select:none; border:1px solid transparent; }
+    .case-card.active { box-shadow: inset 0 0 0 2px rgba(74,163,255,0.55); }
+    .case-img { width:100%; height:92px; border-radius:12px; background:#0b1320; object-fit:cover; display:block; }
+    .case-title { margin:8px 0 2px 0; font-weight:900; font-size:14px; }
+    .case-sub { opacity:.8; font-size:12px; }
 
   </style>
 </head>
@@ -401,7 +369,12 @@
       </div>
 
 
-      <div class="casesBar" id="casesBar"></div>
+      <div class="tabs" id="costTabs">
+        <div class="pill active" data-cost="25">25 ⭐</div>
+        <div class="pill" data-cost="50">50 ⭐</div>
+      </div>
+
+      <div id="casesGrid" class="cases" style="display:none;"></div>
 
       <div class="roulette-wrap">
         <div class="roulette" id="roulette" data-initialized="false">
@@ -528,7 +501,7 @@
         const res = await apiPost('/inventory/sell', {
           initData: tg?.initData || '',
           inventory_id: invId
-        }, `sell-${invId}`);
+        });
 
         if (balanceBadge && res && typeof res.balance === 'number') {
           balanceBadge.textContent = `⭐ ${res.balance}`;
@@ -544,7 +517,7 @@
         const res = await apiPost('/inventory/withdraw', {
           initData: tg?.initData || '',
           inventory_id: invId
-        }, `withdraw-${invId}`);
+        });
 
         // Refresh UI
         await refreshBalance();
@@ -597,64 +570,96 @@
     const btnSell = document.getElementById('btnSell');
     const btnKeep = document.getElementById('btnKeep');
 
-    
+    const pills = Array.from(document.querySelectorAll('.pill[data-cost]'));
+    let selectedCost = 25;
+    let selectedCaseId = null;
 
-function escapeHtml(s){
-  return String(s ?? '').replace(/[&<>"']/g, (m) => ({
-    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
-  }[m]));
-}
 
-    const casesBar = document.getElementById('casesBar');
-let selectedCaseId = null;
-let selectedCost = 25;
+    let pendingSpinId = null;
+    let pendingPrize = null;
 
-function renderCases(items) {
-  if (!casesBar) return;
-  casesBar.innerHTML = '';
-  (items || []).forEach((c, i) => {
-    const card = document.createElement('div');
-    card.className = 'caseCard' + ((selectedCaseId == null && i === 0) || (selectedCaseId === c.id) ? ' active' : '');
-    card.dataset.caseId = String(c.id);
-    card.innerHTML = `
-      <div class="caseImg">
-        ${c.image_url ? `<img src="${String(c.image_url).trim()}" alt="case"/>` : '<div style="opacity:.55;font-weight:900;">КАРТИНКА</div>'}
-      </div>
-      <div class="caseName">${escapeHtml(c.name || 'Кейс')}</div>
-      <div class="casePrice">Цена: ⭐ ${Number(c.price || 0)}</div>
-    `;
-    card.onclick = async () => {
-      selectedCaseId = Number(c.id);
-      selectedCost = Number(c.price || 25);
-      Array.from(casesBar.querySelectorAll('.caseCard')).forEach(x => x.classList.remove('active'));
-      card.classList.add('active');
-      try { tg?.HapticFeedback?.selectionChanged(); } catch (_) {}
-      await refreshCases();
-        await refreshPrizes(); // обновим призы под выбранный кейс
-    };
-    casesBar.appendChild(card);
+    pills.forEach(p => p.addEventListener('click', () => {
+      pills.forEach(x => x.classList.remove('active'));
 
-    if (selectedCaseId == null && i === 0) {
-      selectedCaseId = Number(c.id);
-      selectedCost = Number(c.price || 25);
+
+    // ===== Cases =====
+    async function loadCases() {
+      const grid = document.getElementById('casesGrid');
+      const tabs = document.getElementById('costTabs');
+      if (!grid) return;
+      try {
+        const res = await apiGet('/cases');
+        const items = Array.isArray(res?.items) ? res.items : [];
+        if (!items.length) return;
+
+        // show cases, hide legacy cost tabs
+        grid.style.display = 'grid';
+        if (tabs) tabs.style.display = 'none';
+
+        // pick first case by default
+        selectedCaseId = items[0].id;
+        selectedCost = items[0].price;
+
+        grid.innerHTML = '';
+        for (const c of items) {
+          const card = document.createElement('div');
+          card.className = 'case-card' + (c.id === selectedCaseId ? ' active' : '');
+          const img = document.createElement('img');
+          img.className = 'case-img';
+          img.alt = c.name || 'case';
+          img.src = (c.image_url && String(c.image_url).trim()) ? String(c.image_url).trim() : '';
+          img.onerror = () => { img.style.display='none'; };
+          const title = document.createElement('div');
+          title.className = 'case-title';
+          title.textContent = c.name || `Case #${c.id}`;
+          const sub = document.createElement('div');
+          sub.className = 'case-sub';
+          sub.textContent = `Цена: ⭐ ${c.price ?? ''}`;
+
+          card.appendChild(img);
+          card.appendChild(title);
+          card.appendChild(sub);
+
+          card.addEventListener('click', async () => {
+            selectedCaseId = c.id;
+            selectedCost = c.price;
+            // highlight
+            [...grid.children].forEach(x => x.classList.remove('active'));
+            card.classList.add('active');
+            try { tg?.HapticFeedback?.selectionChanged(); } catch (_) {}
+            await loadCases();
+    refreshPrizes();
+          });
+
+          grid.appendChild(card);
+        }
+
+        await refreshPrizes();
+      } catch (e) {
+        console.warn('loadCases failed', e);
+      }
     }
-  });
-}
 
-async function refreshCases() {
-  try {
-    const res = await apiPost('/cases', { initData: tg?.initData || '' });
-    const items = Array.isArray(res?.items) ? res.items : [];
-    renderCases(items);
-  } catch (e) {
-    console.warn('refreshCases failed', e);
-  }
-}
 
-    async function apiPost(path, payload, idemKey) {
+      p.classList.add('active');
+      selectedCost = parseInt(p.dataset.cost, 10) || 25;
+      try { tg?.HapticFeedback?.selectionChanged(); } catch (_) {}
+    }));
+
+    async function apiGet(path) {
+      const res = await fetch(`${API_BASE}${path}`);
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`HTTP ${res.status}: ${text}`);
+      }
+      return await res.json();
+    }
+
+
+    async function apiPost(path, payload) {
       const res = await fetch(`${API_BASE}${path}`, {
         method: 'POST',
-        headers: Object.assign({ 'Content-Type': 'application/json' }, idemKey ? { 'Idempotency-Key': String(idemKey) } : {}),
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
       if (!res.ok) {
@@ -1064,7 +1069,7 @@ async function refreshCases() {
           initData: tg?.initData || '',
           spin_id: pendingSpinId,
           action
-        }, `claim-${pendingSpinId}-${action}`);
+        });
 
         if (balanceBadge && res && typeof res.balance === 'number') {
           balanceBadge.textContent = `⭐ ${res.balance}`;
@@ -1229,8 +1234,7 @@ async function refreshCases() {
 
         btn.disabled = true;
         try {
-          const spinKey = `spin-${crypto.randomUUID()}`;
-          const prize = await apiPost('/spin', { initData: tg?.initData || '', case_id: selectedCaseId, cost: selectedCost }, spinKey);
+          const prize = await apiPost('/spin', { initData: tg?.initData || '', case_id: selectedCaseId, cost: selectedCost });
 
           if (balanceBadge && prize && typeof prize.balance === 'number') {
             balanceBadge.textContent = `⭐ ${prize.balance}`;
