@@ -131,6 +131,7 @@ class PrizeOut(PrizeIn):
 class CaseIn(BaseModel):
     name: str
     description: Optional[str] = None
+    cover_url: Optional[str] = None
     price: int
     is_active: bool = True
     sort_order: int = 0
@@ -183,23 +184,6 @@ def init_db():
                     )
                     """
                 )
-                # keep prizes schema in sync with migrations (safe to run multiple times)
-                cur.execute("ALTER TABLE prizes ADD COLUMN IF NOT EXISTS gift_id TEXT")
-                cur.execute("ALTER TABLE prizes ADD COLUMN IF NOT EXISTS is_unique BOOLEAN")
-                cur.execute("UPDATE prizes SET is_unique=FALSE WHERE is_unique IS NULL")
-                cur.execute("ALTER TABLE prizes ALTER COLUMN is_unique SET DEFAULT FALSE")
-                cur.execute("ALTER TABLE prizes ALTER COLUMN is_unique SET NOT NULL")
-
-                # Some deployments added prizes.updated_at as NOT NULL; ensure it exists and has sane defaults
-                cur.execute("ALTER TABLE prizes ADD COLUMN IF NOT EXISTS updated_at BIGINT")
-                cur.execute(
-                    "UPDATE prizes SET updated_at = COALESCE(updated_at, created_at, extract(epoch from now())::bigint)"
-                )
-                cur.execute(
-                    "ALTER TABLE prizes ALTER COLUMN updated_at SET DEFAULT (extract(epoch from now())::bigint)"
-                )
-                cur.execute("ALTER TABLE prizes ALTER COLUMN updated_at SET NOT NULL")
-
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_prizes_active_sort ON prizes(is_active, sort_order, id)")
                 cur.execute("ALTER TABLE prizes ADD COLUMN IF NOT EXISTS icon_url TEXT")
 
@@ -266,11 +250,13 @@ def init_db():
                       price INTEGER NOT NULL,
                       is_active BOOLEAN NOT NULL DEFAULT TRUE,
                       sort_order INTEGER NOT NULL DEFAULT 0,
-                      created_at BIGINT NOT NULL
+                      created_at BIGINT NOT NULL,
+                      cover_url TEXT
                     )
                     """
                 )
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_cases_active_sort ON cases(is_active, sort_order, id)")
+                cur.execute("ALTER TABLE cases ADD COLUMN IF NOT EXISTS cover_url TEXT")
 
                 cur.execute(
                     """
@@ -314,8 +300,8 @@ def init_db():
                     now = int(time.time())
                     for p in DEFAULT_PRIZES:
                         cur.execute(
-                            "INSERT INTO prizes (id, name, icon_url, cost, weight, is_active, sort_order, created_at, updated_at) "
-                            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                            "INSERT INTO prizes (id, name, icon_url, cost, weight, is_active, sort_order, created_at) "
+                            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
                             (
                                 int(p["id"]),
                                 str(p["name"]),
@@ -324,7 +310,6 @@ def init_db():
                                 int(p["weight"]),
                                 bool(p.get("is_active", True)),
                                 int(p.get("sort_order", 0)),
-                                now,
                                 now,
                             ),
                         )
@@ -335,7 +320,7 @@ def init_db():
                 if cases_cnt == 0:
                     now = int(time.time())
                     cur.execute(
-                        "INSERT INTO cases (name, description, price, is_active, sort_order, created_at) "
+                        "INSERT INTO cases (name, description, cover_url, price, is_active, sort_order, created_at) "
                         "VALUES (%s,%s,%s,TRUE,0,%s) RETURNING id",
                         ("Стандарт", "Базовый кейс", 25, now),
                     )
@@ -524,7 +509,7 @@ def fetch_active_prizes(cur) -> list[dict]:
 
 def fetch_active_cases(cur) -> list[dict]:
     cur.execute(
-        "SELECT id, name, description, price, is_active, sort_order FROM cases "
+        "SELECT id, name, description, cover_url, price, is_active, sort_order FROM cases "
         "WHERE is_active = TRUE "
         "ORDER BY sort_order ASC, id ASC"
     )
@@ -533,9 +518,10 @@ def fetch_active_cases(cur) -> list[dict]:
         "id": int(r[0]),
         "name": str(r[1]),
         "description": (str(r[2]) if r[2] is not None else None),
-        "price": int(r[3]),
-        "is_active": bool(r[4]),
-        "sort_order": int(r[5]),
+        "cover_url": (str(r[3]).strip() if r[3] is not None else None),
+        "price": int(r[4]),
+        "is_active": bool(r[5]),
+        "sort_order": int(r[6]),
     } for r in rows]
 
 
@@ -631,12 +617,12 @@ def cases_prizes(case_id: int, req: MeReq):
             with con.cursor() as cur:
                 public = extract_tg_user_public(req.initData)
                 get_or_create_user(cur, uid, public)
-                cur.execute("SELECT id, name, price FROM cases WHERE id=%s AND is_active=TRUE", (int(case_id),))
+                cur.execute("SELECT id, name, price, cover_url FROM cases WHERE id=%s AND is_active=TRUE", (int(case_id),))
                 row = cur.fetchone()
                 if not row:
                     raise HTTPException(status_code=404, detail="case not found")
                 items = fetch_case_prizes(cur, int(case_id))
-    return {"case": {"id": int(row[0]), "name": str(row[1]), "price": int(row[2])}, "items": items}
+    return {"case": {"id": int(row[0]), "name": str(row[1]), "price": int(row[2]), "cover_url": (str(row[3]).strip() if row[3] is not None else None)}, "items": items}
 
 @app.post("/inventory")
 def inventory(req: InventoryReq):
@@ -1273,7 +1259,7 @@ def admin_list_prizes(request: Request):
         with con:
             with con.cursor() as cur:
                 cur.execute(
-                    "SELECT id, name, icon_url, cost, weight, gift_id, is_unique, is_active, sort_order, created_at, updated_at "
+                    "SELECT id, name, icon_url, cost, weight, gift_id, is_unique, is_active, sort_order, created_at "
                     "FROM prizes ORDER BY sort_order ASC, id ASC"
                 )
                 rows = cur.fetchall()
@@ -1290,7 +1276,6 @@ def admin_list_prizes(request: Request):
             "is_active": bool(r[7]),
             "sort_order": int(r[8]),
             "created_at": int(r[9]),
-            "updated_at": int(r[10]) if r[10] is not None else int(r[9]),
         })
     return {"items": items}
 
@@ -1307,8 +1292,8 @@ def admin_create_prize(request: Request, req: PrizeIn):
                 new_id = int(cur.fetchone()[0])
 
                 cur.execute(
-                    "INSERT INTO prizes (id, name, icon_url, cost, weight, gift_id, is_unique, is_active, sort_order, created_at, updated_at) "
-                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                    "INSERT INTO prizes (id, name, icon_url, cost, weight, gift_id, is_unique, is_active, sort_order, created_at) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                     (
                         new_id,
                         req.name,
@@ -1319,7 +1304,6 @@ def admin_create_prize(request: Request, req: PrizeIn):
                         bool(req.is_unique),
                         bool(req.is_active),
                         int(req.sort_order),
-                        now,
                         now,
                     ),
                 )
@@ -1334,7 +1318,7 @@ def admin_update_prize(request: Request, prize_id: int, req: PrizeIn):
             with con.cursor() as cur:
                 cur.execute(
                     "UPDATE prizes SET name=%s, icon_url=%s, cost=%s, weight=%s, gift_id=%s, is_unique=%s, "
-                    "is_active=%s, sort_order=%s, updated_at=%s "
+                    "is_active=%s, sort_order=%s "
                     "WHERE id=%s RETURNING created_at",
                     (
                         req.name,
@@ -1345,7 +1329,6 @@ def admin_update_prize(request: Request, prize_id: int, req: PrizeIn):
                         bool(req.is_unique),
                         bool(req.is_active),
                         int(req.sort_order),
-                        int(time.time()),
                         int(prize_id),
                     ),
                 )
@@ -1385,10 +1368,11 @@ def admin_list_cases(request: Request):
         "id": int(r[0]),
         "name": str(r[1]),
         "description": (str(r[2]) if r[2] is not None else None),
-        "price": int(r[3]),
-        "is_active": bool(r[4]),
-        "sort_order": int(r[5]),
-        "created_at": int(r[6]),
+        "cover_url": (str(r[3]).strip() if r[3] is not None else None),
+        "price": int(r[4]),
+        "is_active": bool(r[5]),
+        "sort_order": int(r[6]),
+        "created_at": int(r[7]),
     } for r in rows]}
 
 
@@ -1402,7 +1386,7 @@ def admin_create_case(request: Request, req: CaseIn):
                 cur.execute(
                     "INSERT INTO cases (name, description, price, is_active, sort_order, created_at) "
                     "VALUES (%s,%s,%s,%s,%s,%s) RETURNING id",
-                    (req.name, (req.description or None), int(req.price), bool(req.is_active), int(req.sort_order), now),
+                    (req.name, (req.description or None), (req.cover_url or None), int(req.price), bool(req.is_active), int(req.sort_order), now),
                 )
                 new_id = int(cur.fetchone()[0])
     return {"id": new_id, "created_at": now, **req.model_dump()}
@@ -1415,9 +1399,9 @@ def admin_update_case(request: Request, case_id: int, req: CaseIn):
         with con:
             with con.cursor() as cur:
                 cur.execute(
-                    "UPDATE cases SET name=%s, description=%s, price=%s, is_active=%s, sort_order=%s "
+                    "UPDATE cases SET name=%s, description=%s, cover_url=%s, price=%s, is_active=%s, sort_order=%s "
                     "WHERE id=%s RETURNING created_at",
-                    (req.name, (req.description or None), int(req.price), bool(req.is_active), int(req.sort_order), int(case_id)),
+                    (req.name, (req.description or None), (req.cover_url or None), int(req.price), bool(req.is_active), int(req.sort_order), int(case_id)),
                 )
                 row = cur.fetchone()
                 if not row:
