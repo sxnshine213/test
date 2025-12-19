@@ -292,6 +292,13 @@ def init_db():
                     )
                     """
                 )
+                
+# If case_prizes existed before (old schema), ensure columns exist before indexes
+cur.execute("ALTER TABLE case_prizes ADD COLUMN IF NOT EXISTS sort_order INTEGER NOT NULL DEFAULT 0")
+cur.execute("ALTER TABLE case_prizes ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE")
+cur.execute("ALTER TABLE case_prizes ADD COLUMN IF NOT EXISTS weight INTEGER NOT NULL DEFAULT 1")
+cur.execute("ALTER TABLE case_prizes ADD COLUMN IF NOT EXISTS created_at BIGINT NOT NULL DEFAULT 0")
+
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_case_prizes_case_active_sort ON case_prizes(case_id, is_active, sort_order, prize_id)")
 
 
