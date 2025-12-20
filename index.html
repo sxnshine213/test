@@ -44,6 +44,73 @@
       -webkit-user-select: none;
     }
     .pill.active { box-shadow: inset 0 0 0 2px rgba(74,163,255,0.55); }
+
+    /* Cases gallery (big cover + name + price) */
+    .cases-grid{
+      display: flex;
+      gap: 10px;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: none;
+      padding-bottom: 2px;
+      scroll-snap-type: x mandatory;
+    }
+    .cases-grid::-webkit-scrollbar{ display:none; }
+    .case-card{
+      position: relative;
+      overflow: hidden;
+      border-radius: 18px;
+      padding: 10px;
+      background: radial-gradient(circle at 35% 0%, rgba(91,142,203,.22), rgba(22,34,53,.92));
+      border: 1px solid rgba(255,255,255,0.10);
+      cursor: pointer;
+      user-select: none;
+      -webkit-user-select: none;
+      min-height: 170px;
+      flex: 0 0 186px;
+      scroll-snap-align: start;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .case-card.active{
+      border-color: rgba(74,163,255,0.45);
+      box-shadow: 0 0 0 2px rgba(74,163,255,0.22), 0 0 22px rgba(74,163,255,0.14);
+    }
+    .case-cover{
+      width: 100%;
+      height: 110px;
+      object-fit: contain;
+      border-radius: 14px;
+      background: rgba(0,0,0,0.18);
+      border: 1px solid rgba(255,255,255,0.08);
+    }
+    .case-name{
+      font-weight: 900;
+      font-size: 13px;
+      text-align: center;
+      margin-top: 2px;
+      line-height: 1.15;
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .case-price{
+      background: #f0a54b;
+      color: #1a1208;
+      font-weight: 900;
+      border-radius: 12px;
+      padding: 8px 10px;
+      min-width: 86px;
+      text-align: center;
+      box-shadow: 0 10px 20px rgba(0,0,0,0.18);
+    }
+    @media (max-width: 360px){
+      .case-card{ flex-basis: 86%; }
+    }
     .roulette-wrap {
       background: radial-gradient(circle at center, #18263c, #0f1a2b);
       border-radius: 20px;
@@ -368,7 +435,7 @@
       </div>
 
 
-      <div class="tabs" id="casesTabs"></div>
+      <div class="cases-grid" id="casesTabs"></div>
       <div class="case-hint" id="caseHint"></div>
 
       <div class="roulette-wrap">
@@ -520,17 +587,38 @@ window.addEventListener('error', (ev) => {
       casesTabs.innerHTML = '';
       (items || []).forEach((c, idx) => {
         const el = document.createElement('div');
-        el.className = 'pill' + ((selectedCaseId && c.id === selectedCaseId) || (!selectedCaseId && idx === 0) ? ' active' : '');
+        const isActive = ((selectedCaseId && c.id === selectedCaseId) || (!selectedCaseId && idx === 0));
+        el.className = 'case-card' + (isActive ? ' active' : '');
         el.dataset.caseId = String(c.id);
-        el.textContent = `${c.name} • ${c.price} ⭐`;
+
+        const img = document.createElement('img');
+        img.className = 'case-cover';
+        img.alt = c?.name || 'case';
+        img.referrerPolicy = 'no-referrer';
+        img.loading = 'lazy';
+        img.src = (c?.cover_url || '').trim() || 'https://emojiapi.dev/api/v1/wrapped_gift/128.png';
+
+        const name = document.createElement('div');
+        name.className = 'case-name';
+        name.textContent = c?.name || 'Кейс';
+
+        const price = document.createElement('div');
+        price.className = 'case-price';
+        price.textContent = `⭐ ${c?.price ?? ''}`;
+
+        el.appendChild(img);
+        el.appendChild(name);
+        el.appendChild(price);
+
         el.addEventListener('click', async () => {
-          Array.from(casesTabs.querySelectorAll('.pill')).forEach(x => x.classList.remove('active'));
+          Array.from(casesTabs.querySelectorAll('.case-card')).forEach(x => x.classList.remove('active'));
           el.classList.add('active');
           selectedCaseId = c.id;
           selectedCase = c;
           try { tg?.HapticFeedback?.selectionChanged(); } catch (_) {}
           await refreshCasePrizes();
         });
+
         casesTabs.appendChild(el);
       });
     }

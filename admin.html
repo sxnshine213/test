@@ -124,6 +124,7 @@
     <div class="row" style="margin-top:10px;">
       <input id="caseName" placeholder="Название кейса" style="min-width:200px;flex:2"/>
       <input id="caseDesc" placeholder="Описание" style="min-width:240px;flex:3"/>
+      <input id="caseCoverUrl" placeholder="Cover URL (https://.../cover.png)" style="min-width:260px;flex:3"/>
       <input id="casePrice" placeholder="price (⭐)" style="width:140px"/>
       <input id="caseSort" placeholder="sort" style="width:120px"/>
       <label class="muted" style="display:flex;align-items:center;gap:8px;">
@@ -889,6 +890,7 @@ async function loadTopups() {
   const casesStatus = document.getElementById('casesStatus');
   const caseNameEl = document.getElementById('caseName');
   const caseDescEl = document.getElementById('caseDesc');
+  const caseCoverEl = document.getElementById('caseCoverUrl');
   const casePriceEl = document.getElementById('casePrice');
   const caseSortEl = document.getElementById('caseSort');
   const caseActiveEl = document.getElementById('caseActive');
@@ -907,7 +909,7 @@ async function loadTopups() {
       lastCases = d.items || [];
       const table = document.createElement('table');
       const thead = document.createElement('thead');
-      thead.innerHTML = '<tr><th>id</th><th>name</th><th>description</th><th>price</th><th>sort</th><th>active</th><th>actions</th></tr>';
+      thead.innerHTML = '<tr><th>id</th><th>name</th><th>description</th><th>cover_url</th><th>price</th><th>sort</th><th>active</th><th>actions</th></tr>';
       table.appendChild(thead);
 
       const tbody = document.createElement('tbody');
@@ -923,6 +925,10 @@ async function loadTopups() {
         const tdDesc = document.createElement('td');
         const desc = document.createElement('input'); desc.value = c.description || ''; desc.style.width = '100%';
         tdDesc.appendChild(desc);
+
+        const tdCover = document.createElement('td');
+        const cover = document.createElement('input'); cover.value = c.cover_url || ''; cover.style.width = '100%';
+        tdCover.appendChild(cover);
 
         const tdPrice = document.createElement('td');
         const price = document.createElement('input'); price.value = String(c.price ?? 0); price.style.width='110px';
@@ -944,6 +950,7 @@ async function loadTopups() {
             body: JSON.stringify({
               name: name.value || '',
               description: (desc.value || '').trim() || null,
+              cover_url: (cover.value || '').trim() || null,
               price: parseInt(price.value || '0', 10) || 0,
               is_active: !!active.checked,
               sort_order: parseInt(sort.value || '0', 10) || 0,
@@ -974,6 +981,7 @@ async function loadTopups() {
         tr.appendChild(tdId);
         tr.appendChild(tdName);
         tr.appendChild(tdDesc);
+        tr.appendChild(tdCover);
         tr.appendChild(tdPrice);
         tr.appendChild(tdSort);
         tr.appendChild(tdActive);
@@ -1059,6 +1067,7 @@ async function loadTopups() {
   if (createCaseBtn) createCaseBtn.onclick = async () => {
     const name = (caseNameEl?.value || '').trim();
     const description = (caseDescEl?.value || '').trim();
+    const cover_url = (caseCoverEl?.value || '').trim();
     const price = parseInt(casePriceEl?.value || '0', 10);
     const sort = parseInt(caseSortEl?.value || '0', 10) || 0;
     const is_active = !!(caseActiveEl && caseActiveEl.checked);
@@ -1072,10 +1081,11 @@ async function loadTopups() {
     try{
       await api('/admin/cases', {
         method:'POST',
-        body: JSON.stringify({ name, description: description || null, price, is_active, sort_order: sort })
+        body: JSON.stringify({ name, description: description || null, cover_url: cover_url || null, price, is_active, sort_order: sort })
       });
       caseNameEl.value='';
       caseDescEl.value='';
+      if (caseCoverEl) caseCoverEl.value='';
       casePriceEl.value='';
       caseSortEl.value='';
       caseActiveEl.checked=true;
