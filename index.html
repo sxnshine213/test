@@ -371,7 +371,7 @@
       <div class="tabs" id="casesTabs"></div>
       <div class="case-hint" id="caseHint"></div>
 
-      <div class="roulette-wrap" id="rouletteWrap" style="display:none;">
+      <div class="roulette-wrap">
         <div class="roulette" id="roulette" data-initialized="false">
           <div class="item" data-id="1"><img src="https://emojiapi.dev/api/v1/heart_with_ribbon/128.png"><div class="price">⭐ 15</div></div>
           <div class="item" data-id="2"><img src="https://emojiapi.dev/api/v1/teddy_bear/128.png"><div class="price">⭐ 25</div></div>
@@ -387,15 +387,6 @@
     </div>
 
     <div id="screenInventory" style="display:none;">
-      <div class="inv" style="margin-bottom:14px;">
-        <div class="inv-title">🏷️ Промокоды</div>
-        <div style="margin-top:10px;display:flex;gap:10px;align-items:center;">
-          <input id="promoCodeInput" placeholder="Промокод" style="flex:1;min-width:160px;border-radius:14px;border:1px solid #1f324a;background:#0b1320;color:#fff;padding:10px 12px;font-weight:800;" />
-          <button class="btn-mini" id="promoRedeemBtn">Активировать</button>
-        </div>
-        <div id="promoHint" class="section" style="margin:8px 0 0 0;">&nbsp;</div>
-      </div>
-
       <div class="inv">
         <div class="inv-title">🎒 Инвентарь</div>
         <div id="inventoryEmpty" class="section" style="margin:0;">Пока пусто — крути рулетку 😊</div>
@@ -479,7 +470,6 @@ window.addEventListener('error', (ev) => {
 
     const btn = document.getElementById('spinBtn');
     const roulette = document.getElementById('roulette');
-    const rouletteWrap = document.getElementById('rouletteWrap');
     const balanceBadge = document.getElementById('balanceBadge');
 
     const topupBtn = document.getElementById('topupBtn');
@@ -503,10 +493,6 @@ window.addEventListener('error', (ev) => {
     const inventoryList = document.getElementById('inventoryList');
     const inventoryEmpty = document.getElementById('inventoryEmpty');
 
-    const promoCodeInput = document.getElementById('promoCodeInput');
-    const promoRedeemBtn = document.getElementById('promoRedeemBtn');
-    const promoHint = document.getElementById('promoHint');
-
     const topList = document.getElementById('topList');
     const topMe = document.getElementById('topMe');
 
@@ -524,27 +510,6 @@ window.addEventListener('error', (ev) => {
     let selectedCaseId = null;
     let selectedCase = null;
 
-    function updateSpinAvailability(loading=false){
-      const wrap = document.querySelector('.roulette-wrap');
-      const has = !!selectedCaseId;
-      if (wrap) wrap.style.display = has ? '' : 'none';
-      if (btn){
-        if (!has){
-          btn.disabled = true;
-          btn.textContent = 'Выберите кейс выше';
-        } else if (loading){
-          btn.disabled = true;
-          btn.textContent = 'Загружаем…';
-        } else {
-          btn.disabled = false;
-          if (selectedCase && typeof selectedCase.price === 'number') btn.textContent = `Крутить • ${selectedCase.price} ⭐`;
-        }
-      }
-      if (caseHint && !has){
-        caseHint.textContent = 'Сначала выбери кейс — затем появится рулетка.';
-      }
-    }
-
 	    // Pending (open claim from previous spin)
 	    // These vars are referenced by the Spin button handler and by openClaim().
 	    let pendingSpinId = null;
@@ -555,7 +520,7 @@ window.addEventListener('error', (ev) => {
       casesTabs.innerHTML = '';
       (items || []).forEach((c, idx) => {
         const el = document.createElement('div');
-        el.className = 'pill' + ((selectedCaseId && c.id === selectedCaseId) ? ' active' : '');
+        el.className = 'pill' + ((selectedCaseId && c.id === selectedCaseId) || (!selectedCaseId && idx === 0) ? ' active' : '');
         el.dataset.caseId = String(c.id);
         el.textContent = `${c.name} • ${c.price} ⭐`;
         el.addEventListener('click', async () => {
@@ -563,7 +528,6 @@ window.addEventListener('error', (ev) => {
           el.classList.add('active');
           selectedCaseId = c.id;
           selectedCase = c;
-          updateSpinAvailability(true);
           try { tg?.HapticFeedback?.selectionChanged(); } catch (_) {}
           await refreshCasePrizes();
         });
@@ -576,31 +540,23 @@ window.addEventListener('error', (ev) => {
         const res = await apiPost('/cases', { initData: tg?.initData || '' });
         const items = Array.isArray(res?.items) ? res.items : [];
         if (items.length){
-          if (selectedCaseId){
-            selectedCase = items.find(x => x.id === selectedCaseId) || null;
-            if (!selectedCase) selectedCaseId = null;
+          if (!selectedCaseId) {
+            selectedCaseId = items[0].id;
+            selectedCase = items[0];
           } else {
-            selectedCase = null;
+            selectedCase = items.find(x => x.id === selectedCaseId) || items[0];
+            selectedCaseId = selectedCase.id;
           }
-        } else {
-          selectedCaseId = null;
-          selectedCase = null;
         }
         renderCases(items);
-        updateSpinAvailability(false);
-        if (selectedCaseId) await refreshCasePrizes();
+        await refreshCasePrizes();
       }catch(e){
         console.warn('refreshCases failed', e);
       }
     }
 
     async function refreshCasePrizes(){
-      if (!selectedCaseId) {
-        setPrizes([]);
-        rebuildRouletteFromPrizes([]);
-        updateSpinAvailability(false);
-        return;
-      }
+      if (!selectedCaseId) return;
       try{
         const res = await apiPost(`/cases/${selectedCaseId}/prizes`, { initData: tg?.initData || '' });
         const items = Array.isArray(res?.items) ? res.items : [];
@@ -901,29 +857,7 @@ async function refreshPrizes() {
       }
     }
 
-    async function redeemPromo() {
-      const code = String(promoCodeInput?.value || '').trim();
-      if (!code) {
-        if (promoHint) promoHint.textContent = 'Введи промокод.';
-        return;
-      }
-      if (promoRedeemBtn) promoRedeemBtn.disabled = true;
-      if (promoHint) promoHint.textContent = 'Проверяем…';
-      try {
-        const res = await apiPost('/promo/redeem', { initData: tg?.initData || '', code });
-        if (balanceBadge && res?.balance != null) balanceBadge.textContent = `⭐ ${res.balance}`;
-        if (promoHint) promoHint.textContent = `✅ Активирован ${res.code}: +${res.credited} ⭐`;
-        if (promoCodeInput) promoCodeInput.value = '';
-      } catch (e) {
-        if (promoHint) promoHint.textContent = '❌ ' + (e?.message || e);
-      } finally {
-        if (promoRedeemBtn) promoRedeemBtn.disabled = false;
-      }
-    }
-
-    promoRedeemBtn?.addEventListener('click', redeemPromo);
-    promoCodeInput?.addEventListener('keydown', (e) => { if (e.key === 'Enter') redeemPromo(); });
-
+    
     if (inventoryList && !inventoryList.dataset.bound) {
       inventoryList.dataset.bound = '1';
       inventoryList.addEventListener('click', async (e) => {
@@ -1002,7 +936,7 @@ async function refreshLeaderboard() {
       tabInv?.classList.toggle('active', isInv);
       tabTop?.classList.toggle('active', isTop);
 
-      if (isInv) { refreshInventory(); }
+      if (isInv) refreshInventory();
       if (isTop) refreshLeaderboard();
     }
 
@@ -1248,8 +1182,7 @@ async function refreshLeaderboard() {
     function easeOutCubic(t) { return 1 - Math.pow(1 - t, 3); }
 
     async function spinToPrize(prize) {
-      updateSpinAvailability(false);
-    if (selectedCaseId) initInfiniteRoulette();
+      initInfiniteRoulette();
 
       r.dataset.lockScroll = 'true';
       r.style.pointerEvents = 'none';
@@ -1315,11 +1248,6 @@ async function refreshLeaderboard() {
 
         btn.disabled = true;
         try {
-          if (!selectedCaseId) {
-            alert('Сначала выбери кейс.');
-            updateSpinAvailability(false);
-            return;
-          }
           const prize = await apiPost('/spin', { initData: tg?.initData || '', case_id: selectedCaseId });
 
           if (balanceBadge && prize && typeof prize.balance === 'number') {
@@ -1340,8 +1268,7 @@ async function refreshLeaderboard() {
       (async () => {
   try {
     await refreshPrizes();
-    updateSpinAvailability(false);
-    if (selectedCaseId) initInfiniteRoulette();
+    initInfiniteRoulette();
     refreshBalance();
     refreshRecentWins();
     setInterval(refreshRecentWins, 12000);
