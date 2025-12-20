@@ -233,6 +233,11 @@ def init_db():
                 # --- Schema upgrades (cases, gifts, claims, withdraw locks) ---
                 cur.execute("ALTER TABLE prizes ADD COLUMN IF NOT EXISTS gift_id TEXT")
                 cur.execute("ALTER TABLE prizes ADD COLUMN IF NOT EXISTS is_unique BOOLEAN NOT NULL DEFAULT FALSE")
+                cur.execute("ALTER TABLE prizes ADD COLUMN IF NOT EXISTS updated_at BIGINT")
+                # Ensure updated_at is always present (epoch seconds)
+                cur.execute("UPDATE prizes SET updated_at = COALESCE(updated_at, created_at) WHERE updated_at IS NULL")
+                cur.execute("ALTER TABLE prizes ALTER COLUMN updated_at SET DEFAULT (extract(epoch from now())::bigint)")
+                cur.execute("ALTER TABLE prizes ALTER COLUMN updated_at SET NOT NULL")
 
                 cur.execute("ALTER TABLE spins ADD COLUMN IF NOT EXISTS case_id BIGINT")
                 cur.execute("ALTER TABLE spins ADD COLUMN IF NOT EXISTS case_name TEXT")
@@ -321,8 +326,8 @@ def init_db():
                     now = int(time.time())
                     cur.execute(
                         "INSERT INTO cases (name, description, cover_url, price, is_active, sort_order, created_at) "
-                        "VALUES (%s,%s,%s,%s,TRUE,0,%s) RETURNING id",
-                        ("Стандарт", "Базовый кейс", None, 25, now),
+                        "VALUES (%s,%s,%s,TRUE,0,%s) RETURNING id",
+                        ("Стандарт", "Базовый кейс", 25, now),
                     )
                     default_case_id = int(cur.fetchone()[0])
                     # bind all prizes to default case with their current weights
@@ -586,7 +591,6 @@ def prizes(req: MeReq):
                     "ORDER BY sort_order ASC, id ASC"
                 )
                 rows = cur.fetchall()
-
     items = []
     for r in rows:
         # r = (id, name, cost, icon_url)
@@ -778,8 +782,14 @@ def inventory_withdraw(req: InventoryWithdrawReq):
 
 
 @app.post("/spin")
-def spin(req: SpinReq):
+def spin(request: Request, req: SpinReq, debug: bool = Query(False)):
     uid = extract_tg_user_id(req.initData)
+
+    def is_admin_req() -> bool:
+        if not ADMIN_KEY:
+            return False
+        got = request.headers.get("X-Admin-Key", "")
+        return bool(got) and hmac.compare_digest(got, ADMIN_KEY)
 
     spin_id = str(uuid.uuid4())
     now = int(time.time())
@@ -791,25 +801,28 @@ def spin(req: SpinReq):
                 get_or_create_user(cur, uid, public)
 
                 # Determine case & price
-                case_id = int(req.case_id) if req.case_id else 0
-                case_name = None
-                cost = None
+                case_id_req = int(req.case_id) if req.case_id else 0
+                case_id_used: Optional[int] = None
+                case_name: Optional[str] = None
+                cost: Optional[int] = None
+                used_fallback_pool = False
 
-                if case_id > 0:
-                    cur.execute("SELECT id, name, price FROM cases WHERE id=%s AND is_active=TRUE", (case_id,))
+                if case_id_req > 0:
+                    cur.execute("SELECT id, name, price FROM cases WHERE id=%s AND is_active=TRUE", (case_id_req,))
                     crow = cur.fetchone()
                     if not crow:
                         raise HTTPException(status_code=404, detail="case not found")
-                    case_id = int(crow[0])
+                    case_id_used = int(crow[0])
                     case_name = str(crow[1])
                     cost = int(crow[2])
                 else:
+                    # Default: first active case
                     cur.execute(
                         "SELECT id, name, price FROM cases WHERE is_active=TRUE ORDER BY sort_order ASC, id ASC LIMIT 1"
                     )
                     crow = cur.fetchone()
                     if crow:
-                        case_id = int(crow[0])
+                        case_id_used = int(crow[0])
                         case_name = str(crow[1])
                         cost = int(crow[2])
 
@@ -831,17 +844,41 @@ def spin(req: SpinReq):
                     raise HTTPException(status_code=400, detail="balance too low")
                 new_balance = int(row[0])
 
-                # Prizes for selected case
-                prizes = []
-                if case_id > 0:
-                    prizes = fetch_case_prizes(cur, case_id)
+                # Build prize pool
+                prizes: list[dict] = []
+                if case_id_used is not None:
+                    prizes = fetch_case_prizes(cur, case_id_used)
+                    if not prizes:
+                        # If user explicitly chose a case, don't silently spin another pool.
+                        if case_id_req > 0:
+                            raise HTTPException(status_code=400, detail="case has no active prizes")
+                        used_fallback_pool = True
+                        case_id_used = None
+                        case_name = None
+
                 if not prizes:
                     prizes = fetch_active_prizes(cur)
+                    used_fallback_pool = used_fallback_pool or True
+
                 if not prizes:
                     # fallback (если таблица пуста/всё отключено)
-                    prizes = [{"id": p["id"], "name": p["name"], "icon_url": (p.get("icon_url") or None), "cost": p["cost"], "weight": p["weight"]} for p in DEFAULT_PRIZES]
+                    prizes = [
+                        {
+                            "id": p["id"],
+                            "name": p["name"],
+                            "icon_url": (p.get("icon_url") or None),
+                            "cost": p["cost"],
+                            "weight": p["weight"],
+                        }
+                        for p in DEFAULT_PRIZES
+                    ]
+                    used_fallback_pool = True
 
-                prize = random.choices(prizes, weights=[p["weight"] for p in prizes], k=1)[0]
+                weights = [max(0, int(p.get("weight", 0) or 0)) for p in prizes]
+                if not any(w > 0 for w in weights):
+                    raise HTTPException(status_code=500, detail="no valid weights")
+
+                prize = random.choices(prizes, weights=weights, k=1)[0]
 
                 cur.execute(
                     "INSERT INTO spins (spin_id, tg_user_id, bet_cost, prize_id, prize_name, prize_cost, status, created_at, case_id, case_name, case_price) "
@@ -854,23 +891,44 @@ def spin(req: SpinReq):
                         str(prize["name"]),
                         int(prize["cost"]),
                         now,
-                        (case_id if case_id > 0 else None),
+                        (case_id_used if case_id_used is not None else None),
                         (case_name if case_name else None),
-                        (cost if case_id > 0 else None),
+                        (cost if case_id_used is not None else None),
                     ),
                 )
 
-    return {
+    resp = {
         "spin_id": spin_id,
         "id": int(prize["id"]),
         "name": str(prize["name"]),
         "icon_url": ((prize.get("icon_url") or "").strip() or None),
         "cost": int(prize["cost"]),
         "balance": int(new_balance),
-        "case_id": int(case_id) if case_id > 0 else None,
+        "case_id": int(case_id_used) if case_id_used is not None else None,
         "case_name": case_name,
         "bet_cost": int(cost),
+        "used_fallback_pool": bool(used_fallback_pool),
     }
+
+    # Debug payload for admin only (helps verify pool/weights)
+    if debug and is_admin_req():
+        total_w = sum(weights)
+        pool_debug = []
+        for p, w in zip(prizes, weights):
+            pool_debug.append({
+                "prize_id": int(p["id"]),
+                "name": str(p["name"]),
+                "weight": int(w),
+                "pct": (float(w) / float(total_w) * 100.0) if total_w else 0.0,
+            })
+        resp["debug"] = {
+            "case_id_requested": int(case_id_req) if case_id_req > 0 else None,
+            "case_id_used": int(case_id_used) if case_id_used is not None else None,
+            "total_weight": int(total_w),
+            "pool": pool_debug,
+        }
+
+    return resp
 
 
 @app.post("/claim")
@@ -1297,8 +1355,8 @@ def admin_create_prize(request: Request, req: PrizeIn):
                 new_id = int(cur.fetchone()[0])
 
                 cur.execute(
-                    "INSERT INTO prizes (id, name, icon_url, cost, weight, gift_id, is_unique, is_active, sort_order, created_at) "
-                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                    "INSERT INTO prizes (id, name, icon_url, cost, weight, gift_id, is_unique, is_active, sort_order, created_at, updated_at) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                     (
                         new_id,
                         req.name,
@@ -1309,6 +1367,7 @@ def admin_create_prize(request: Request, req: PrizeIn):
                         bool(req.is_unique),
                         bool(req.is_active),
                         int(req.sort_order),
+                        now,
                         now,
                     ),
                 )
@@ -1323,7 +1382,7 @@ def admin_update_prize(request: Request, prize_id: int, req: PrizeIn):
             with con.cursor() as cur:
                 cur.execute(
                     "UPDATE prizes SET name=%s, icon_url=%s, cost=%s, weight=%s, gift_id=%s, is_unique=%s, "
-                    "is_active=%s, sort_order=%s "
+                    "is_active=%s, sort_order=%s, updated_at=%s "
                     "WHERE id=%s RETURNING created_at",
                     (
                         req.name,
@@ -1334,6 +1393,7 @@ def admin_update_prize(request: Request, prize_id: int, req: PrizeIn):
                         bool(req.is_unique),
                         bool(req.is_active),
                         int(req.sort_order),
+                        int(time.time()),
                         int(prize_id),
                     ),
                 )
@@ -1440,6 +1500,68 @@ def admin_get_case_prizes(request: Request, case_id: int):
                 )
                 rows = cur.fetchall()
     return {"items": [{"prize_id": int(r[0]), "weight": int(r[1]), "is_active": bool(r[2])} for r in rows]}
+
+
+@app.get("/admin/debug/cases/{case_id}/pool")
+def admin_debug_case_pool(request: Request, case_id: int):
+    """
+    Diagnostic endpoint: shows the exact prize pool for a case and computed probabilities.
+    Helps catch issues where a case has 0 active prizes or wrong weights.
+    """
+    require_admin(request)
+    with pool.connection() as con:
+        with con:
+            with con.cursor() as cur:
+                # Raw bindings
+                cur.execute(
+                    "SELECT cp.prize_id, cp.weight, cp.is_active, p.name, p.cost, p.is_active "
+                    "FROM case_prizes cp "
+                    "JOIN prizes p ON p.id = cp.prize_id "
+                    "WHERE cp.case_id=%s "
+                    "ORDER BY cp.prize_id ASC",
+                    (int(case_id),),
+                )
+                rows = cur.fetchall()
+
+    raw = []
+    active = []
+    total_w = 0
+    for r in rows:
+        prize_id = int(r[0])
+        w = int(r[1])
+        cp_active = bool(r[2])
+        name = str(r[3])
+        cost = int(r[4])
+        p_active = bool(r[5])
+        raw.append({
+            "prize_id": prize_id,
+            "name": name,
+            "cost": cost,
+            "weight": w,
+            "case_prize_active": cp_active,
+            "prize_active": p_active,
+        })
+        if cp_active and p_active and w > 0:
+            total_w += w
+            active.append((prize_id, name, cost, w))
+
+    items = []
+    for prize_id, name, cost, w in active:
+        items.append({
+            "prize_id": prize_id,
+            "name": name,
+            "cost": cost,
+            "weight": w,
+            "pct": (float(w) / float(total_w) * 100.0) if total_w else 0.0,
+        })
+
+    return {
+        "case_id": int(case_id),
+        "active_pool_count": len(items),
+        "total_weight": int(total_w),
+        "active_pool": items,
+        "raw_bindings": raw,
+    }
 
 
 @app.post("/admin/cases/{case_id}/prizes")
