@@ -66,6 +66,30 @@
     <div id="userTables"></div>
   </div>
 
+
+
+  <div class="card">
+    <div class="row" style="justify-content:space-between;">
+      <div style="font-weight:900;">🏷️ Промокоды</div>
+      <button class="secondary" id="loadPromos">Обновить</button>
+    </div>
+
+    <div class="row" style="margin-top:10px;">
+      <input id="promoCode" placeholder="code (пусто = сгенерировать)" style="min-width:220px;flex:2"/>
+      <input id="promoAmount" placeholder="amount" style="width:140px"/>
+      <input id="promoMaxUses" placeholder="max uses" style="width:140px" value="1"/>
+      <input id="promoExpires" placeholder="expires (unix, опц.)" style="min-width:200px;flex:2"/>
+      <label class="muted" style="display:flex;align-items:center;gap:8px;">
+        <input id="promoActive" type="checkbox" checked style="width:auto;"/>
+        active
+      </label>
+      <button id="createPromo">Создать</button>
+      <div id="promosStatus" class="muted"></div>
+    </div>
+
+    <div id="promosBox"></div>
+  </div>
+
   <div class="card">
     <div class="row" style="justify-content:space-between;">
       <div style="font-weight:900;">🎁 Призы</div>
@@ -1085,6 +1109,86 @@ async function loadTopups() {
       casesStatus.textContent = 'ошибка: ' + (e?.message || e);
     }
   };
+
+
+
+  // ===== Promo codes =====
+  const loadPromosBtn = document.getElementById('loadPromos');
+  const createPromoBtn = document.getElementById('createPromo');
+  const promosBox = document.getElementById('promosBox');
+  const promosStatus = document.getElementById('promosStatus');
+
+  const promoCodeEl = document.getElementById('promoCode');
+  const promoAmountEl = document.getElementById('promoAmount');
+  const promoMaxUsesEl = document.getElementById('promoMaxUses');
+  const promoExpiresEl = document.getElementById('promoExpires');
+  const promoActiveEl = document.getElementById('promoActive');
+
+  async function loadPromos(){
+    if (!promosBox) return;
+    promosBox.innerHTML = '<div class="muted">загрузка...</div>';
+    try{
+      const d = await api('/admin/promos?limit=500');
+      const items = d.items || [];
+      if (!items.length){
+        promosBox.innerHTML = '<div class="muted">Промокодов пока нет.</div>';
+        return;
+      }
+      const table = document.createElement('table');
+      table.innerHTML = '<thead><tr><th>code</th><th>amount</th><th>uses</th><th>expires</th><th>active</th><th>created</th><th>actions</th></tr></thead>';
+      const tbody = document.createElement('tbody');
+      items.forEach(p => {
+        const tr = document.createElement('tr');
+        const tdCode = document.createElement('td'); tdCode.textContent = String(p.code);
+        const tdAmt = document.createElement('td'); tdAmt.textContent = String(p.amount);
+        const tdUses = document.createElement('td'); tdUses.textContent = `${p.used_count}/${p.max_uses}`;
+        const tdExp = document.createElement('td'); tdExp.textContent = p.expires_at ? new Date(p.expires_at*1000).toLocaleString() : '—';
+        const tdAct = document.createElement('td'); tdAct.innerHTML = p.is_active ? '<span class="pill ok">true</span>' : '<span class="pill bad">false</span>';
+        const tdCreated = document.createElement('td'); tdCreated.textContent = p.created_at ? new Date(p.created_at*1000).toLocaleString() : '';
+        const tdA = document.createElement('td');
+        const disable = document.createElement('button');
+        disable.textContent = 'disable';
+        disable.className = 'secondary btn-xs';
+        disable.disabled = !p.is_active;
+        disable.onclick = async () => {
+          await api(`/admin/promos/${encodeURIComponent(p.code)}/disable`, { method: 'POST' });
+          await loadPromos();
+        };
+        tdA.appendChild(disable);
+        tr.appendChild(tdCode); tr.appendChild(tdAmt); tr.appendChild(tdUses); tr.appendChild(tdExp); tr.appendChild(tdAct); tr.appendChild(tdCreated); tr.appendChild(tdA);
+        tbody.appendChild(tr);
+      });
+      table.appendChild(tbody);
+      promosBox.innerHTML='';
+      promosBox.appendChild(table);
+    }catch(e){
+      promosBox.innerHTML = '<div class="muted">ошибка: ' + (e?.message || e) + '</div>';
+    }
+  }
+
+  async function createPromo(){
+    if (!promosStatus) return;
+    promosStatus.textContent = '...';
+    try{
+      const body = {
+        code: (promoCodeEl?.value || '').trim() || null,
+        amount: parseInt(promoAmountEl?.value || '0', 10),
+        max_uses: parseInt(promoMaxUsesEl?.value || '1', 10),
+        expires_at: (promoExpiresEl?.value || '').trim() ? parseInt(promoExpiresEl.value.trim(), 10) : null,
+        is_active: !!promoActiveEl?.checked,
+      };
+      const d = await api('/admin/promos', { method:'POST', body });
+      promosStatus.textContent = 'ok: ' + d.code;
+      if (promoCodeEl) promoCodeEl.value = '';
+      await loadPromos();
+    }catch(e){
+      promosStatus.textContent = 'ошибка: ' + (e?.message || e);
+    }
+  }
+
+  if (loadPromosBtn) loadPromosBtn.onclick = loadPromos;
+  if (createPromoBtn) createPromoBtn.onclick = createPromo;
+
 
   // ===== Claims =====
   const loadClaimsBtn = document.getElementById('loadClaims');

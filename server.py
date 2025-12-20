@@ -1,7 +1,7 @@
 import os
 import json
 import time
-import random
+import secrets
 import uuid
 import hmac
 import hashlib
@@ -41,6 +41,8 @@ INITDATA_MAX_AGE_SEC = int(os.environ.get("INITDATA_MAX_AGE_SEC", str(24 * 3600)
 
 PG_POOL_MIN = int(os.environ.get("PG_POOL_MIN", "1"))
 PG_POOL_MAX = int(os.environ.get("PG_POOL_MAX", "10"))
+
+SPIN_COOLDOWN_SEC = int(os.environ.get("SPIN_COOLDOWN_SEC", "2"))
 
 ADMIN_KEY = os.environ.get("ADMIN_KEY", "").strip()
 
@@ -103,6 +105,24 @@ class TopupCreateReq(WithInitData):
 
 class LeaderboardReq(WithInitData):
     limit: int = 30
+
+
+
+class PromoRedeemReq(WithInitData):
+    code: str
+
+
+class PromoIn(BaseModel):
+    code: Optional[str] = None  # if empty, server will generate
+    amount: int
+    max_uses: int = 1
+    expires_at: Optional[int] = None  # unix seconds
+    is_active: bool = True
+
+
+class PromoOut(PromoIn):
+    used_count: int
+    created_at: int
 
 
 class AdminAdjustReq(BaseModel):
@@ -168,6 +188,34 @@ def init_db():
                 cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS first_name TEXT")
                 cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_name TEXT")
                 cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS photo_url TEXT")
+                cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_spin_at BIGINT")
+
+                # promo codes
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS promo_codes (
+                      code TEXT PRIMARY KEY,
+                      amount INTEGER NOT NULL,
+                      max_uses INTEGER NOT NULL,
+                      used_count INTEGER NOT NULL DEFAULT 0,
+                      expires_at BIGINT,
+                      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                      created_at BIGINT NOT NULL
+                    )
+                    """
+                )
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_promo_active_expires ON promo_codes(is_active, expires_at)")
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS promo_uses (
+                      code TEXT NOT NULL REFERENCES promo_codes(code) ON DELETE CASCADE,
+                      tg_user_id TEXT NOT NULL REFERENCES users(tg_user_id) ON DELETE CASCADE,
+                      used_at BIGINT NOT NULL,
+                      PRIMARY KEY (code, tg_user_id)
+                    )
+                    """
+                )
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_promo_uses_user ON promo_uses(tg_user_id, used_at)")
 
                 # prizes
                 cur.execute(
@@ -550,6 +598,35 @@ def get_balance(cur, uid: str) -> int:
     return int(row[0]) if row else 0
 
 
+def weighted_choice(items: list[dict], weight_key: str = "weight") -> dict:
+    """Crypto-safe weighted choice (no random module).
+
+    items: list of dicts with int weight in weight_key
+    """
+    if not items:
+        raise ValueError('items is empty')
+    total = 0
+    for it in items:
+        try:
+            w = int(it.get(weight_key, 0))
+        except Exception:
+            w = 0
+        if w > 0:
+            total += w
+    if total <= 0:
+        return items[0]
+    r = secrets.randbelow(total)
+    acc = 0
+    for it in items:
+        w = int(it.get(weight_key, 0) or 0)
+        if w <= 0:
+            continue
+        acc += w
+        if r < acc:
+            return it
+    return items[-1]
+
+
 # ===== Public API =====
 @app.get("/")
 def root():
@@ -566,6 +643,58 @@ def me(req: MeReq):
                 bal = get_or_create_user(cur, uid, public)
     return {"tg_user_id": uid, "balance": int(bal)}
 
+
+@app.post('/promo/redeem')
+def promo_redeem(req: PromoRedeemReq):
+    uid = extract_tg_user_id(req.initData)
+    public = extract_tg_user_public(req.initData)
+
+    code = (req.code or '').strip().upper()
+    if not code or len(code) > 32:
+        raise HTTPException(status_code=400, detail='bad promo code')
+
+    now = int(time.time())
+
+    with pool.connection() as con:
+        with con:
+            with con.cursor() as cur:
+                get_or_create_user(cur, uid, public)
+
+                cur.execute(
+                    'SELECT code, amount, max_uses, used_count, expires_at, is_active ' 
+                    'FROM promo_codes WHERE code=%s FOR UPDATE',
+                    (code,),
+                )
+                row = cur.fetchone()
+                if not row:
+                    raise HTTPException(status_code=404, detail='promo not found')
+
+                amount = int(row[1])
+                max_uses = int(row[2])
+                used_count = int(row[3])
+                expires_at = int(row[4]) if row[4] is not None else None
+                is_active = bool(row[5])
+
+                if (not is_active) or (expires_at is not None and now >= expires_at):
+                    raise HTTPException(status_code=400, detail='promo inactive')
+                if used_count >= max_uses:
+                    raise HTTPException(status_code=400, detail='promo exhausted')
+                if amount <= 0:
+                    raise HTTPException(status_code=400, detail='promo amount invalid')
+
+                # prevent double use by same user
+                cur.execute(
+                    'INSERT INTO promo_uses (code, tg_user_id, used_at) VALUES (%s,%s,%s) ON CONFLICT DO NOTHING',
+                    (code, uid, now),
+                )
+                if cur.rowcount == 0:
+                    raise HTTPException(status_code=409, detail='promo already used')
+
+                cur.execute('UPDATE promo_codes SET used_count = used_count + 1 WHERE code=%s', (code,))
+                cur.execute('UPDATE users SET balance = balance + %s WHERE tg_user_id=%s RETURNING balance', (amount, uid))
+                new_balance = int(cur.fetchone()[0])
+
+    return {'ok': True, 'code': code, 'credited': amount, 'balance': new_balance}
 
 
 
@@ -819,16 +948,28 @@ def spin(req: SpinReq):
                     if cost not in (25, 50):
                         raise HTTPException(status_code=400, detail="bad cost")
 
-                # списываем ставку атомарно
+                # списываем ставку атомарно + ставим кулдаун
                 cur.execute(
-                    "UPDATE users SET balance = balance - %s "
+                    "UPDATE users SET balance = balance - %s, last_spin_at=%s "
                     "WHERE tg_user_id=%s AND balance >= %s "
+                    "AND (last_spin_at IS NULL OR last_spin_at <= %s) "
                     "RETURNING balance",
-                    (cost, uid, cost),
+                    (cost, now, uid, cost, now - SPIN_COOLDOWN_SEC),
                 )
                 row = cur.fetchone()
                 if not row:
-                    raise HTTPException(status_code=400, detail="balance too low")
+                    # чтобы вернуть понятную ошибку, проверим что именно случилось
+                    cur.execute("SELECT balance, last_spin_at FROM users WHERE tg_user_id=%s", (uid,))
+                    st = cur.fetchone()
+                    if not st:
+                        raise HTTPException(status_code=404, detail="user not found")
+                    bal_now = int(st[0] or 0)
+                    last_spin_at = int(st[1]) if st[1] is not None else 0
+                    if bal_now < cost:
+                        raise HTTPException(status_code=400, detail="balance too low")
+                    if last_spin_at and (now - last_spin_at) < SPIN_COOLDOWN_SEC:
+                        raise HTTPException(status_code=429, detail=f"spin cooldown {SPIN_COOLDOWN_SEC}s")
+                    raise HTTPException(status_code=409, detail="spin blocked")
                 new_balance = int(row[0])
 
                 # Prizes for selected case
@@ -841,7 +982,7 @@ def spin(req: SpinReq):
                     # fallback (если таблица пуста/всё отключено)
                     prizes = [{"id": p["id"], "name": p["name"], "icon_url": (p.get("icon_url") or None), "cost": p["cost"], "weight": p["weight"]} for p in DEFAULT_PRIZES]
 
-                prize = random.choices(prizes, weights=[p["weight"] for p in prizes], k=1)[0]
+                prize = weighted_choice(prizes, "weight")
 
                 cur.execute(
                     "INSERT INTO spins (spin_id, tg_user_id, bet_cost, prize_id, prize_name, prize_cost, status, created_at, case_id, case_name, case_price) "
@@ -1255,6 +1396,75 @@ def admin_adjust_balance(request: Request, req: AdminAdjustReq):
 
     return {"ok": True, "tg_user_id": uid, "balance": bal, "delta": delta}
 
+
+# ===== Admin: Promo codes =====
+def _gen_promo_code() -> str:
+    alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+    return ''.join(alphabet[secrets.randbelow(len(alphabet))] for _ in range(8))
+
+
+@app.get('/admin/promos')
+def admin_list_promos(request: Request, limit: int = Query(200, ge=1, le=1000)):
+    require_admin(request)
+    with pool.connection() as con:
+        with con:
+            with con.cursor() as cur:
+                cur.execute(
+                    'SELECT code, amount, max_uses, used_count, expires_at, is_active, created_at '
+                    'FROM promo_codes ORDER BY created_at DESC LIMIT %s',
+                    (int(limit),),
+                )
+                rows = cur.fetchall()
+    return {'items': [{
+        'code': str(r[0]),
+        'amount': int(r[1]),
+        'max_uses': int(r[2]),
+        'used_count': int(r[3]),
+        'expires_at': (int(r[4]) if r[4] is not None else None),
+        'is_active': bool(r[5]),
+        'created_at': int(r[6]),
+    } for r in rows]}
+
+
+@app.post('/admin/promos')
+def admin_create_promo(request: Request, req: PromoIn):
+    require_admin(request)
+    now = int(time.time())
+    code = (req.code or '').strip().upper()
+    if not code:
+        code = _gen_promo_code()
+    if len(code) > 32:
+        raise HTTPException(status_code=400, detail='code too long')
+    amount = int(req.amount)
+    max_uses = int(req.max_uses)
+    if amount <= 0 or max_uses <= 0:
+        raise HTTPException(status_code=400, detail='bad promo params')
+
+    expires_at = int(req.expires_at) if req.expires_at is not None else None
+
+    with pool.connection() as con:
+        with con:
+            with con.cursor() as cur:
+                cur.execute(
+                    'INSERT INTO promo_codes (code, amount, max_uses, used_count, expires_at, is_active, created_at) '
+                    'VALUES (%s,%s,%s,0,%s,%s,%s)',
+                    (code, amount, max_uses, expires_at, bool(req.is_active), now),
+                )
+    return {'ok': True, 'code': code, 'amount': amount, 'max_uses': max_uses, 'used_count': 0, 'expires_at': expires_at, 'is_active': bool(req.is_active), 'created_at': now}
+
+
+@app.post('/admin/promos/{code}/disable')
+def admin_disable_promo(request: Request, code: str):
+    require_admin(request)
+    c = (code or '').strip().upper()
+    with pool.connection() as con:
+        with con:
+            with con.cursor() as cur:
+                cur.execute('UPDATE promo_codes SET is_active=FALSE WHERE code=%s RETURNING code', (c,))
+                row = cur.fetchone()
+                if not row:
+                    raise HTTPException(status_code=404, detail='promo not found')
+    return {'ok': True, 'code': c, 'is_active': False}
 
 # ===== Admin: CRUD prizes =====
 @app.get("/admin/prizes")
