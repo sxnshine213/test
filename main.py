@@ -1,1 +1,1 @@
-from server_updated import app
+from server import app
