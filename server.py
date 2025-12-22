@@ -369,13 +369,19 @@ def init_db():
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_lottery_entries_hour_range ON lottery_entries(hour_start, start_no, end_no)")
                 cur.execute(
                     """
-                    CREATE TABLE IF NOT EXISTS house (
+                    CREATE TABLE IF NOT EXISTS lottery_house (
                       id INTEGER PRIMARY KEY,
-                      lottery_commission BIGINT NOT NULL DEFAULT 0
+                      commission BIGINT NOT NULL DEFAULT 0,
+                      created_at BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::bigint),
+                      updated_at BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::bigint)
                     )
                     """
                 )
-                cur.execute("INSERT INTO house (id, lottery_commission) VALUES (1, 0) ON CONFLICT (id) DO NOTHING")
+                cur.execute(
+                    "INSERT INTO lottery_house (id, commission, created_at, updated_at) "
+                    "VALUES (1, 0, EXTRACT(EPOCH FROM NOW())::bigint, EXTRACT(EPOCH FROM NOW())::bigint) "
+                    "ON CONFLICT (id) DO NOTHING"
+                )
 
                 cur.execute("SELECT COUNT(*) FROM prizes")
                 cnt = int(cur.fetchone()[0] or 0)
@@ -631,7 +637,7 @@ def _draw_lottery_round(cur, hour_start: int, now_ts: int) -> bool:
     # pay winner
     cur.execute("UPDATE users SET balance = balance + %s WHERE tg_user_id=%s", (prize, winner_uid))
     # house commission
-    cur.execute("UPDATE house SET lottery_commission = lottery_commission + %s WHERE id=1", (commission,))
+    cur.execute("UPDATE lottery_house SET commission = commission + %s, updated_at = %s WHERE id=1", (commission, int(time.time())))
 
     cur.execute(
         """
@@ -1553,7 +1559,7 @@ def admin_stats(request: Request):
 
                 # lottery stats
                 try:
-                    cur.execute("SELECT lottery_commission FROM house WHERE id=1")
+                    cur.execute("SELECT commission FROM lottery_house WHERE id=1")
                     lottery_commission = int((cur.fetchone() or [0])[0] or 0)
                 except Exception:
                     lottery_commission = 0
