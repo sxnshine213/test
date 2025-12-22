@@ -362,6 +362,9 @@ def init_db():
                     )
                     """
                 )
+                                # Ensure columns exist even if table was created by older deploys
+                cur.execute("ALTER TABLE lottery_entries ADD COLUMN IF NOT EXISTS start_no BIGINT")
+                cur.execute("ALTER TABLE lottery_entries ADD COLUMN IF NOT EXISTS end_no BIGINT")
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_lottery_entries_hour_user ON lottery_entries(hour_start, tg_user_id)")
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_lottery_entries_hour_range ON lottery_entries(hour_start, start_no, end_no)")
                 cur.execute(
@@ -606,7 +609,7 @@ def _draw_lottery_round(cur, hour_start: int, now_ts: int) -> bool:
         """
         SELECT tg_user_id
         FROM lottery_entries
-        WHERE hour_start=%s AND start_no<=%s AND end_no>=%s
+        WHERE hour_start=%s AND start_no IS NOT NULL AND end_no IS NOT NULL AND start_no<=%s AND end_no>=%s
         LIMIT 1
         """,
         (hour_start, win_no, win_no),
