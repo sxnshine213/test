@@ -467,11 +467,51 @@
         <div id="topMe" class="section" style="margin:0 0 10px 0;">—</div>
         <div id="topList" class="inv-list" style="grid-template-columns: 1fr;"></div>
       </div>
+
+    <div id="screenLottery" style="display:none;">
+      <div class="inv">
+        <div class="inv-title">🎟️ Лотерея (каждый час)</div>
+
+        <div id="lotteryCountdown" class="section" style="margin:0;">—</div>
+
+        <div style="margin-top:10px; display:flex; gap:10px; flex-wrap:wrap;">
+          <div style="background:#162235;border-radius:14px;padding:10px 12px;flex:1;min-width:150px;">
+            <div style="opacity:.75;font-size:12px;font-weight:800;">Пот</div>
+            <div id="lotteryPot" style="font-weight:900;font-size:18px;margin-top:4px;">—</div>
+            <div id="lotteryPrize" style="opacity:.8;font-size:12px;margin-top:4px;">—</div>
+          </div>
+          <div style="background:#162235;border-radius:14px;padding:10px 12px;flex:1;min-width:150px;">
+            <div style="opacity:.75;font-size:12px;font-weight:800;">Мои билеты</div>
+            <div id="lotteryMy" style="font-weight:900;font-size:18px;margin-top:4px;">—</div>
+            <div id="lotteryTicketPrice" style="opacity:.8;font-size:12px;margin-top:4px;">—</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="inv" style="margin-top:12px;">
+        <div class="inv-title">Купить билеты</div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+          <button class="btn-mini" id="lotteryBuy1">+1</button>
+          <button class="btn-mini" id="lotteryBuy5">+5</button>
+          <input id="lotteryQty" type="number" min="1" value="10"
+                 style="width:110px;border-radius:12px;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.08);color:#fff;padding:8px 10px;font-weight:800;">
+          <button class="btn-mini" id="lotteryBuyQty">Купить</button>
+        </div>
+        <div id="lotteryBuyHint" class="section" style="margin:10px 0 0 0;">—</div>
+      </div>
+
+      <div class="inv" style="margin-top:12px;">
+        <div class="inv-title">Последний победитель</div>
+        <div id="lotteryLast" class="section" style="margin:0;">—</div>
+      </div>
+    </div>
+
     </div>
   </div>
 
   <div class="bottom-nav">
     <div class="nav active" id="tabSpin">🎰 Рулетка</div>
+    <div class="nav" id="tabLottery">🎟️ Лотерея</div>
     <div class="nav" id="tabInv">🎒 Инвентарь</div>
     <div class="nav" id="tabTop">🏆 Топ</div>
   </div>
@@ -552,10 +592,12 @@ window.addEventListener('error', (ev) => {
     const screenRoulette = document.getElementById('screenRoulette');
     const screenInventory = document.getElementById('screenInventory');
     const screenTop = document.getElementById('screenTop');
+    const screenLottery = document.getElementById('screenLottery');
 
     const tabSpin = document.getElementById('tabSpin');
     const tabInv = document.getElementById('tabInv');
     const tabTop = document.getElementById('tabTop');
+    const tabLottery = document.getElementById('tabLottery');
 
     const inventoryList = document.getElementById('inventoryList');
     const inventoryEmpty = document.getElementById('inventoryEmpty');
@@ -978,7 +1020,110 @@ async function refreshPrizes() {
       });
     }
 
-async function refreshLeaderboard() {
+
+function fmtHHMMSS(sec) {
+      sec = Math.max(0, Math.floor(sec || 0));
+      const h = Math.floor(sec / 3600);
+      const m = Math.floor((sec % 3600) / 60);
+      const s = sec % 60;
+      const pad = (x) => String(x).padStart(2, '0');
+      return (h > 0 ? (pad(h) + ':') : '') + pad(m) + ':' + pad(s);
+    }
+
+    function startLotteryTimers() {
+      if (lotteryRefreshInterval) return;
+
+      lotteryRefreshInterval = setInterval(() => {
+        if (tabLottery?.classList.contains('active')) refreshLottery();
+      }, 10000);
+
+      lotteryCountdownInterval = setInterval(() => {
+        if (!tabLottery?.classList.contains('active')) return;
+        if (!lotteryEndsAt) return;
+        const now = Math.floor(Date.now() / 1000);
+        const left = Math.max(0, lotteryEndsAt - now);
+        if (lotteryCountdown) lotteryCountdown.textContent = `До розыгрыша: ${fmtHHMMSS(left)}`;
+      }, 1000);
+    }
+
+    function stopLotteryTimers() {
+      if (lotteryRefreshInterval) {
+        clearInterval(lotteryRefreshInterval);
+        lotteryRefreshInterval = null;
+      }
+      if (lotteryCountdownInterval) {
+        clearInterval(lotteryCountdownInterval);
+        lotteryCountdownInterval = null;
+      }
+    }
+
+    async function refreshLottery() {
+      if (!lotteryCountdown) return;
+      try {
+        const res = await apiPost('/lottery/status', { initData: tg?.initData || '' });
+        const lot = res?.lottery || {};
+
+        if (balanceBadge && res?.balance !== undefined) balanceBadge.textContent = `⭐ ${res.balance}`;
+
+        lotteryEndsAt = Number(lot.hour_end || 0) || null;
+        lotteryTicketPrice = Number(lot.ticket_price || 0) || null;
+
+        const totalSpent = Number(lot.total_spent || 0);
+        const totalTickets = Number(lot.total_tickets || 0);
+        const prize80 = Math.floor(totalSpent * 0.80);
+
+        if (lotteryPot) lotteryPot.textContent = `⭐ ${totalSpent}`;
+        if (lotteryPrize) lotteryPrize.textContent = `Победителю: ⭐ ${prize80} (80%) • Комиссия: 20%`;
+
+        const myTickets = Number(lot.my_tickets || 0);
+        const mySpent = Number(lot.my_spent || 0);
+        if (lotteryMy) lotteryMy.textContent = `${myTickets} шт. • ⭐ ${mySpent}`;
+        if (lotteryTicketPriceEl) lotteryTicketPriceEl.textContent = `Цена билета: ⭐ ${lotteryTicketPrice || '—'} • Всего билетов: ${totalTickets}`;
+
+        const left = Number(lot.remaining_sec || 0);
+        if (lotteryCountdown) lotteryCountdown.textContent = `До розыгрыша: ${fmtHHMMSS(left)}`;
+
+        if (lotteryBuyHint) {
+          lotteryBuyHint.textContent = `Купи билеты сейчас — розыгрыш в конце часа. Победитель получает 80% пота, 20% — комиссия бота.`;
+        }
+
+        const last = res?.last;
+        if (lotteryLast) {
+          if (last && last.hour_start) {
+            const dt = new Date((Number(last.hour_start) || 0) * 1000);
+            const when = dt.toLocaleString();
+            const wname = last.winner_name || (last.winner_user_id ? ('User ' + String(last.winner_user_id).slice(-4)) : '—');
+            lotteryLast.textContent = `${when} • Победитель: ${wname} • Приз: ⭐ ${last.prize_amount || 0} • Пот: ⭐ ${last.total_spent || 0}`;
+          } else {
+            lotteryLast.textContent = '—';
+          }
+        }
+      } catch (e) {
+        lotteryCountdown.textContent = 'Ошибка загрузки лотереи';
+        if (lotteryBuyHint) lotteryBuyHint.textContent = (e?.message || e || '').toString();
+      }
+    }
+
+    async function buyLotteryTickets(qty) {
+      qty = Number(qty || 0);
+      if (!qty || qty < 1) return;
+      try {
+        const res = await apiPost('/lottery/buy', { initData: tg?.initData || '', qty });
+        if (balanceBadge && res?.balance !== undefined) balanceBadge.textContent = `⭐ ${res.balance}`;
+        try { tg?.HapticFeedback?.notificationOccurred?.('success'); } catch (_) {}
+        refreshLottery();
+      } catch (e) {
+        try { tg?.HapticFeedback?.notificationOccurred?.('error'); } catch (_) {}
+        alert('Не удалось купить билет: ' + (e?.message || e));
+      }
+    }
+
+    lotteryBuy1?.addEventListener('click', () => buyLotteryTickets(1));
+    lotteryBuy5?.addEventListener('click', () => buyLotteryTickets(5));
+    lotteryBuyQty?.addEventListener('click', () => buyLotteryTickets(Number(lotteryQty?.value || 1)));
+
+
+    async function refreshLeaderboard() {
       if (!topList || !topMe) return;
 
       topMe.textContent = 'Загрузка...';
@@ -1013,26 +1158,37 @@ async function refreshLeaderboard() {
     }
 
     function setTab(which) {
-      const isInv = which === 'inv';
-      const isTop = which === 'top';
+          const isInv = which === 'inv';
+          const isTop = which === 'top';
+          const isLottery = which === 'lottery';
+    
+          if (screenRoulette) screenRoulette.style.display = (isInv || isTop || isLottery) ? 'none' : '';
+          if (screenInventory) screenInventory.style.display = isInv ? '' : 'none';
+          if (screenTop) screenTop.style.display = isTop ? '' : 'none';
+          if (screenLottery) screenLottery.style.display = isLottery ? '' : 'none';
+    
+          tabSpin?.classList.toggle('active', which === 'spin');
+          tabInv?.classList.toggle('active', isInv);
+          tabTop?.classList.toggle('active', isTop);
+          tabLottery?.classList.toggle('active', isLottery);
+    
+          if (isInv) refreshInventory();
+          if (isTop) refreshLeaderboard();
+          if (isLottery) {
+            refreshLottery();
+            startLotteryTimers();
+          } else {
+            stopLotteryTimers();
+          }
+        }
+    
+        tabSpin?.addEventListener('click', () => setTab('spin'));
+        tabLottery?.addEventListener('click', () => setTab('lottery'));
+        tabInv?.addEventListener('click', () => setTab('inv'));
+        tabTop?.addEventListener('click', () => setTab('top'));
+    
 
-      if (screenRoulette) screenRoulette.style.display = (isInv || isTop) ? 'none' : '';
-      if (screenInventory) screenInventory.style.display = isInv ? '' : 'none';
-      if (screenTop) screenTop.style.display = isTop ? '' : 'none';
-
-      tabSpin?.classList.toggle('active', !isInv && !isTop);
-      tabInv?.classList.toggle('active', isInv);
-      tabTop?.classList.toggle('active', isTop);
-
-      if (isInv) refreshInventory();
-      if (isTop) refreshLeaderboard();
-    }
-
-    tabSpin?.addEventListener('click', () => setTab('spin'));
-    tabInv?.addEventListener('click', () => setTab('inv'));
-    tabTop?.addEventListener('click', () => setTab('top'));
-
-    // ===== Topup =====
+        // ===== Topup =====
     function openTopup() {
       selectedTopupStars = null;
       topupPacks.forEach(p => p.style.boxShadow = '');

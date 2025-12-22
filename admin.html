@@ -279,6 +279,10 @@
       statsBox.appendChild(statCard('Topups 24h', s.topups_24h));
       statsBox.appendChild(statCard('Paid stars total', s.paid_stars_total));
       statsBox.appendChild(statCard('Paid stars 24h', s.paid_stars_24h));
+      if (s.lottery_commission_total !== undefined) statsBox.appendChild(statCard('Lottery commission total', s.lottery_commission_total));
+      if (s.lotteries_total !== undefined) statsBox.appendChild(statCard('Lotteries total', s.lotteries_total));
+      if (s.lotteries_24h !== undefined) statsBox.appendChild(statCard('Lotteries 24h', s.lotteries_24h));
+      if (s.lottery_spent_24h !== undefined) statsBox.appendChild(statCard('Lottery spent 24h', s.lottery_spent_24h));
       statsStatus.innerHTML = `<span class="ok">OK</span> • ${new Date().toLocaleTimeString()}`;
     } catch (e) {
       statsStatus.innerHTML = `<span class="bad">ERR</span> • ${e.message}`;
