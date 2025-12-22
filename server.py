@@ -1,8 +1,8 @@
 import os
 import json
 import time
-import asyncio
 import random
+import asyncio
 import uuid
 import hmac
 import hashlib
@@ -61,63 +61,33 @@ DEFAULT_PRIZES = [
 
 pool = ConnectionPool(conninfo=DATABASE_URL, min_size=PG_POOL_MIN, max_size=PG_POOL_MAX, timeout=10)
 
+lottery_task: asyncio.Task | None = None
+
+
+
+
+@app.on_event("startup")
+async def _startup():
+    global lottery_task
+    # background worker that finalizes hourly lotteries even if nobody calls endpoints
+    if lottery_task is None:
+        lottery_task = asyncio.create_task(lottery_worker())
 
 @app.on_event("shutdown")
 def _shutdown():
+    global lottery_task
+    try:
+        if lottery_task is not None:
+            lottery_task.cancel()
+            lottery_task = None
+    except Exception:
+        pass
+
     try:
         pool.close()
     except Exception:
         pass
 
-
-
-# ===== Background workers =====
-_lottery_task: Optional[asyncio.Task] = None
-
-
-@app.on_event("startup")
-async def _startup():
-    global _lottery_task
-    # Ensure current lottery row exists, and start background draw loop
-    async def _worker():
-        await asyncio.sleep(2)
-        while True:
-            try:
-                now = int(time.time())
-                hs = _hour_start(now)
-                with pool.connection() as con:
-                    with con:
-                        with con.cursor() as cur:
-                            # ensure housekeeping rows
-                            cur.execute(
-                                "INSERT INTO house (id, lottery_commission, created_at) "
-                                "VALUES (1,0,%s) ON CONFLICT (id) DO NOTHING",
-                                (now,),
-                            )
-                            ensure_lottery(cur, hs)
-                # draw all ended lotteries (if any)
-                while True:
-                    r = _draw_one_ended_lottery()
-                    if not r:
-                        break
-            except Exception as e:
-                # don't crash the app; just log
-                try:
-                    print("lottery worker error:", e)
-                except Exception:
-                    pass
-            await asyncio.sleep(int(LOTTERY_POLL_SEC))
-
-    if _lottery_task is None:
-        _lottery_task = asyncio.create_task(_worker())
-
-
-@app.on_event("shutdown")
-async def _shutdown_tasks():
-    global _lottery_task
-    if _lottery_task:
-        _lottery_task.cancel()
-        _lottery_task = None
 
 # ===== Models =====
 class WithInitData(BaseModel):
@@ -126,6 +96,18 @@ class WithInitData(BaseModel):
 
 class MeReq(WithInitData):
     pass
+
+
+class LotteryStatusReq(WithInitData):
+    pass
+
+
+class LotteryBuyReq(WithInitData):
+    qty: int = 1
+
+
+class LotteryHistoryReq(WithInitData):
+    limit: int = 10
 
 
 class SpinReq(WithInitData):
@@ -158,15 +140,6 @@ class TopupCreateReq(WithInitData):
 
 class LeaderboardReq(WithInitData):
     limit: int = 30
-
-
-
-class LotteryBuyReq(WithInitData):
-    qty: int = 1
-
-
-class LotteryHistoryReq(WithInitData):
-    limit: int = 10
 
 
 class AdminAdjustReq(BaseModel):
@@ -357,61 +330,50 @@ def init_db():
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_inv_user_time ON inventory(tg_user_id, created_at)")
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_topups_user_time ON topups(tg_user_id, created_at)")
 
-                # ===== Lottery (hourly) =====
+                # seed prizes if empty
+                
+                # ===== Lottery tables =====
                 cur.execute(
                     """
-                    CREATE TABLE IF NOT EXISTS house (
-                      id SMALLINT PRIMARY KEY,
-                      lottery_commission BIGINT NOT NULL DEFAULT 0,
-                      created_at BIGINT NOT NULL
-                    )
-                    """
-                )
-                # Ensure single row
-                cur.execute(
-                    "INSERT INTO house (id, lottery_commission, created_at) "
-                    "VALUES (1, 0, %s) ON CONFLICT (id) DO NOTHING",
-                    (int(time.time()),),
-                )
-
-                cur.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS lotteries (
+                    CREATE TABLE IF NOT EXISTS lottery_rounds (
                       hour_start BIGINT PRIMARY KEY,
                       hour_end BIGINT NOT NULL,
-                      status TEXT NOT NULL,
                       ticket_price INTEGER NOT NULL,
-                      total_tickets INTEGER NOT NULL DEFAULT 0,
                       total_spent BIGINT NOT NULL DEFAULT 0,
-                      winner_user_id TEXT REFERENCES users(tg_user_id) ON DELETE SET NULL,
-                      winning_offset INTEGER,
+                      total_tickets BIGINT NOT NULL DEFAULT 0,
+                      winner_user_id TEXT,
+                      winner_ticket_no BIGINT,
                       prize_amount BIGINT,
                       commission_amount BIGINT,
                       drawn_at BIGINT
                     )
                     """
                 )
-                cur.execute("CREATE INDEX IF NOT EXISTS idx_lotteries_status_end ON lotteries(status, hour_end)")
-                cur.execute("CREATE INDEX IF NOT EXISTS idx_lotteries_drawn ON lotteries(drawn_at)")
-
                 cur.execute(
                     """
                     CREATE TABLE IF NOT EXISTS lottery_entries (
                       id BIGSERIAL PRIMARY KEY,
-                      hour_start BIGINT NOT NULL REFERENCES lotteries(hour_start) ON DELETE CASCADE,
+                      hour_start BIGINT NOT NULL REFERENCES lottery_rounds(hour_start) ON DELETE CASCADE,
                       tg_user_id TEXT NOT NULL REFERENCES users(tg_user_id) ON DELETE CASCADE,
                       qty INTEGER NOT NULL,
-                      unit_price INTEGER NOT NULL,
-                      total_price BIGINT NOT NULL,
+                      start_no BIGINT NOT NULL,
+                      end_no BIGINT NOT NULL,
                       created_at BIGINT NOT NULL
                     )
                     """
                 )
-                cur.execute("CREATE INDEX IF NOT EXISTS idx_lottery_entries_hour ON lottery_entries(hour_start, id)")
-                cur.execute("CREATE INDEX IF NOT EXISTS idx_lottery_entries_user ON lottery_entries(tg_user_id, created_at)")
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_lottery_entries_hour_user ON lottery_entries(hour_start, tg_user_id)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_lottery_entries_hour_range ON lottery_entries(hour_start, start_no, end_no)")
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS house (
+                      id INTEGER PRIMARY KEY,
+                      lottery_commission BIGINT NOT NULL DEFAULT 0
+                    )
+                    """
+                )
+                cur.execute("INSERT INTO house (id, lottery_commission) VALUES (1, 0) ON CONFLICT (id) DO NOTHING")
 
-                # seed prizes if empty
                 cur.execute("SELECT COUNT(*) FROM prizes")
                 cnt = int(cur.fetchone()[0] or 0)
                 if cnt == 0:
@@ -586,6 +548,137 @@ def display_name(username: Optional[str], first_name: Optional[str], last_name: 
     return full if full else mask_uid(uid)
 
 
+
+# ===== Lottery helpers =====
+def _hour_start(ts: int) -> int:
+    return ts - (ts % 3600)
+
+
+def _ensure_lottery_round(cur, hour_start: int, now_ts: int) -> None:
+    hour_end = hour_start + 3600
+    cur.execute(
+        """
+        INSERT INTO lottery_rounds (hour_start, hour_end, ticket_price)
+        VALUES (%s, %s, %s)
+        ON CONFLICT (hour_start) DO NOTHING
+        """,
+        (hour_start, hour_end, LOTTERY_TICKET_PRICE),
+    )
+
+
+def _draw_lottery_round(cur, hour_start: int, now_ts: int) -> bool:
+    """
+    Finalize a round if it's ended and not drawn yet.
+    Returns True if round was finalized (drawn or closed with 0 tickets).
+    """
+    cur.execute(
+        """
+        SELECT hour_end, ticket_price, total_spent, total_tickets, drawn_at
+        FROM lottery_rounds
+        WHERE hour_start = %s
+        FOR UPDATE
+        """,
+        (hour_start,),
+    )
+    row = cur.fetchone()
+    if not row:
+        return False
+
+    hour_end, ticket_price, total_spent, total_tickets, drawn_at = row
+    hour_end = int(hour_end)
+    total_spent = int(total_spent or 0)
+    total_tickets = int(total_tickets or 0)
+    if drawn_at is not None:
+        return False
+    if hour_end > now_ts:
+        return False
+
+    if total_tickets <= 0 or total_spent <= 0:
+        cur.execute(
+            "UPDATE lottery_rounds SET drawn_at=%s, prize_amount=0, commission_amount=0 WHERE hour_start=%s",
+            (now_ts, hour_start),
+        )
+        return True
+
+    win_no = random.randint(1, total_tickets)
+
+    cur.execute(
+        """
+        SELECT tg_user_id
+        FROM lottery_entries
+        WHERE hour_start=%s AND start_no<=%s AND end_no>=%s
+        LIMIT 1
+        """,
+        (hour_start, win_no, win_no),
+    )
+    w = cur.fetchone()
+    if not w:
+        # safety fallback: close without winner, but keep commission/prize 0
+        cur.execute(
+            "UPDATE lottery_rounds SET drawn_at=%s, prize_amount=0, commission_amount=0 WHERE hour_start=%s",
+            (now_ts, hour_start),
+        )
+        return True
+
+    winner_uid = str(w[0])
+
+    prize = (total_spent * 80) // 100
+    commission = total_spent - prize
+
+    # pay winner
+    cur.execute("UPDATE users SET balance = balance + %s WHERE tg_user_id=%s", (prize, winner_uid))
+    # house commission
+    cur.execute("UPDATE house SET lottery_commission = lottery_commission + %s WHERE id=1", (commission,))
+
+    cur.execute(
+        """
+        UPDATE lottery_rounds
+        SET winner_user_id=%s,
+            winner_ticket_no=%s,
+            prize_amount=%s,
+            commission_amount=%s,
+            drawn_at=%s
+        WHERE hour_start=%s
+        """,
+        (winner_uid, win_no, prize, commission, now_ts, hour_start),
+    )
+    return True
+
+
+def _draw_due_lotteries(cur, now_ts: int, max_hours_back: int = 24) -> int:
+    """
+    Finalize ended rounds (most recent first). Returns count of finalized rounds.
+    """
+    finalized = 0
+    # We only need to check recent past hours
+    cur_h = _hour_start(now_ts)
+    for k in range(1, max_hours_back + 1):
+        hs = cur_h - 3600 * k
+        # avoid scanning hours with no row
+        cur.execute("SELECT 1 FROM lottery_rounds WHERE hour_start=%s AND drawn_at IS NULL", (hs,))
+        if cur.fetchone():
+            if _draw_lottery_round(cur, hs, now_ts):
+                finalized += 1
+    return finalized
+
+
+async def lottery_worker():
+    # background loop
+    while True:
+        try:
+            now_ts = int(time.time())
+            with pool.connection() as con:
+                with con:
+                    with con.cursor() as cur:
+                        _draw_due_lotteries(cur, now_ts, max_hours_back=48)
+        except Exception as e:
+            try:
+                print("lottery_worker error:", e)
+            except Exception:
+                pass
+        await asyncio.sleep(max(5, int(LOTTERY_POLL_SEC)))
+
+
 def get_or_create_user(cur, tg_user_id: str, public: Optional[dict] = None) -> int:
     cur.execute(
         "INSERT INTO users (tg_user_id, balance, created_at) "
@@ -666,123 +759,6 @@ def get_balance(cur, uid: str) -> int:
     cur.execute("SELECT balance FROM users WHERE tg_user_id=%s", (uid,))
     row = cur.fetchone()
     return int(row[0]) if row else 0
-
-
-# ===== Lottery helpers =====
-def _hour_start(ts: int) -> int:
-    ts = int(ts)
-    return ts - (ts % 3600)
-
-
-def ensure_lottery(cur, hour_start: int):
-    hour_start = int(hour_start)
-    hour_end = hour_start + 3600
-    cur.execute(
-        "INSERT INTO lotteries (hour_start, hour_end, status, ticket_price, total_tickets, total_spent) "
-        "VALUES (%s,%s,'open',%s,0,0) ON CONFLICT (hour_start) DO NOTHING",
-        (hour_start, hour_end, int(LOTTERY_TICKET_PRICE)),
-    )
-
-
-def _draw_one_ended_lottery() -> Optional[dict]:
-    """Draws exactly one ended open lottery (if any). Safe for multi-instance via SKIP LOCKED."""
-    now = int(time.time())
-    with pool.connection() as con:
-        with con:
-            with con.cursor() as cur:
-                # Pick one ended lottery and lock it
-                cur.execute(
-                    "SELECT hour_start, hour_end, ticket_price, total_tickets, total_spent "
-                    "FROM lotteries "
-                    "WHERE status='open' AND hour_end <= %s "
-                    "ORDER BY hour_end ASC "
-                    "LIMIT 1 FOR UPDATE SKIP LOCKED",
-                    (now,),
-                )
-                lot = cur.fetchone()
-                if not lot:
-                    return None
-
-                hour_start, hour_end, ticket_price, total_tickets, total_spent = (
-                    int(lot[0]),
-                    int(lot[1]),
-                    int(lot[2]),
-                    int(lot[3]),
-                    int(lot[4]),
-                )
-
-                if total_tickets <= 0 or total_spent <= 0:
-                    cur.execute(
-                        "UPDATE lotteries SET status='drawn', drawn_at=%s, prize_amount=0, commission_amount=0 "
-                        "WHERE hour_start=%s",
-                        (now, hour_start),
-                    )
-                    return {
-                        "hour_start": hour_start,
-                        "hour_end": hour_end,
-                        "status": "drawn",
-                        "ticket_price": ticket_price,
-                        "total_tickets": total_tickets,
-                        "total_spent": total_spent,
-                        "winner_user_id": None,
-                        "prize_amount": 0,
-                        "commission_amount": 0,
-                    }
-
-                win_offset = random.randint(1, total_tickets)  # 1..total_tickets inclusive
-
-                cur.execute(
-                    "SELECT tg_user_id, qty FROM lottery_entries WHERE hour_start=%s ORDER BY id ASC",
-                    (hour_start,),
-                )
-                rows = cur.fetchall()
-
-                winner_uid = None
-                acc = 0
-                for r in rows:
-                    u = str(r[0])
-                    q = int(r[1])
-                    acc += q
-                    if win_offset <= acc:
-                        winner_uid = u
-                        break
-                if not winner_uid and rows:
-                    winner_uid = str(rows[-1][0])
-
-                prize_amount = int((total_spent * 80) // 100)
-                commission_amount = int(total_spent - prize_amount)
-
-                # credit winner
-                if winner_uid:
-                    cur.execute(
-                        "UPDATE users SET balance = balance + %s WHERE tg_user_id=%s",
-                        (prize_amount, winner_uid),
-                    )
-
-                # add commission to house
-                cur.execute(
-                    "UPDATE house SET lottery_commission = lottery_commission + %s WHERE id=1",
-                    (commission_amount,),
-                )
-
-                cur.execute(
-                    "UPDATE lotteries SET status='drawn', winner_user_id=%s, winning_offset=%s, "
-                    "prize_amount=%s, commission_amount=%s, drawn_at=%s "
-                    "WHERE hour_start=%s",
-                    (winner_uid, win_offset, prize_amount, commission_amount, now, hour_start),
-                )
-
-                return {
-                    "hour_start": hour_start,
-                    "hour_end": hour_end,
-                    "status": "drawn",
-                    "ticket_price": ticket_price,
-                    "total_tickets": total_tickets,
-                    "total_spent": total_spent,
-                    "winner_user_id": winner_uid,
-                    "prize_amount": prize_amount,
-                    "commission_amount": commission_amount,
-                }
 
 
 # ===== Public API =====
@@ -1206,208 +1182,6 @@ def leaderboard(req: LeaderboardReq):
     return {"items": items, "me": me_obj}
 
 
-
-
-# ===== Lottery (hourly) =====
-@app.post("/lottery/status")
-def lottery_status(req: MeReq):
-    uid = extract_tg_user_id(req.initData)
-    now = int(time.time())
-    hs = _hour_start(now)
-    he = hs + 3600
-
-    with pool.connection() as con:
-        with con:
-            with con.cursor() as cur:
-                public = extract_tg_user_public(req.initData)
-                bal = get_or_create_user(cur, uid, public)
-
-                # ensure rows
-                cur.execute(
-                    "INSERT INTO house (id, lottery_commission, created_at) "
-                    "VALUES (1,0,%s) ON CONFLICT (id) DO NOTHING",
-                    (now,),
-                )
-                ensure_lottery(cur, hs)
-
-                cur.execute(
-                    "SELECT hour_start, hour_end, status, ticket_price, total_tickets, total_spent "
-                    "FROM lotteries WHERE hour_start=%s",
-                    (hs,),
-                )
-                lot = cur.fetchone()
-                if not lot:
-                    raise HTTPException(status_code=500, detail="lottery not available")
-
-                cur.execute(
-                    "SELECT COALESCE(SUM(qty),0), COALESCE(SUM(total_price),0) "
-                    "FROM lottery_entries WHERE hour_start=%s AND tg_user_id=%s",
-                    (hs, uid),
-                )
-                my_qty, my_spent = cur.fetchone()
-                my_qty = int(my_qty or 0)
-                my_spent = int(my_spent or 0)
-
-                # previous drawn (for info)
-                cur.execute(
-                    "SELECT hour_start, total_spent, prize_amount, winner_user_id, drawn_at "
-                    "FROM lotteries WHERE status='drawn' AND hour_start < %s "
-                    "ORDER BY hour_start DESC LIMIT 1",
-                    (hs,),
-                )
-                prev = cur.fetchone()
-                prev_obj = None
-                if prev:
-                    p_hs, p_spent, p_prize, p_winner, p_drawn = int(prev[0]), int(prev[1] or 0), int(prev[2] or 0), (prev[3] if prev[3] else None), int(prev[4] or 0)
-                    winner_name = None
-                    winner_avatar = None
-                    if p_winner:
-                        cur.execute(
-                            "SELECT username, first_name, last_name, photo_url FROM users WHERE tg_user_id=%s",
-                            (str(p_winner),),
-                        )
-                        urow = cur.fetchone()
-                        if urow:
-                            winner_name = display_name(urow[0], urow[1], urow[2], str(p_winner))
-                            winner_avatar = (str(urow[3]).strip() if urow[3] else None)
-                    prev_obj = {
-                        "hour_start": p_hs,
-                        "total_spent": p_spent,
-                        "prize_amount": p_prize,
-                        "winner_user_id": p_winner,
-                        "winner_name": winner_name,
-                        "winner_avatar": winner_avatar,
-                        "drawn_at": p_drawn,
-                    }
-
-    return {
-        "balance": int(bal),
-        "lottery": {
-            "hour_start": int(lot[0]),
-            "hour_end": int(lot[1]),
-            "status": str(lot[2]),
-            "ticket_price": int(lot[3]),
-            "total_tickets": int(lot[4]),
-            "total_spent": int(lot[5]),
-            "remaining_sec": max(0, int(he - now)),
-            "my_tickets": my_qty,
-            "my_spent": my_spent,
-        },
-        "last": prev_obj,
-    }
-
-
-@app.post("/lottery/buy")
-def lottery_buy(req: LotteryBuyReq):
-    uid = extract_tg_user_id(req.initData)
-    now = int(time.time())
-    hs = _hour_start(now)
-
-    qty = int(req.qty or 1)
-    if qty < 1 or qty > int(LOTTERY_MAX_QTY):
-        raise HTTPException(status_code=400, detail=f"bad qty (1..{int(LOTTERY_MAX_QTY)})")
-
-    with pool.connection() as con:
-        with con:
-            with con.cursor() as cur:
-                public = extract_tg_user_public(req.initData)
-                get_or_create_user(cur, uid, public)
-
-                # ensure and lock current lottery row
-                ensure_lottery(cur, hs)
-                cur.execute(
-                    "SELECT status, hour_end, ticket_price FROM lotteries WHERE hour_start=%s FOR UPDATE",
-                    (hs,),
-                )
-                lot = cur.fetchone()
-                if not lot:
-                    raise HTTPException(status_code=500, detail="lottery not available")
-                status = str(lot[0])
-                hour_end = int(lot[1])
-                ticket_price = int(lot[2])
-
-                if status != "open" or now >= hour_end:
-                    raise HTTPException(status_code=409, detail="lottery closed")
-
-                total_price = int(ticket_price * qty)
-
-                # deduct balance atomically
-                cur.execute(
-                    "UPDATE users SET balance = balance - %s "
-                    "WHERE tg_user_id=%s AND balance >= %s "
-                    "RETURNING balance",
-                    (total_price, uid, total_price),
-                )
-                row = cur.fetchone()
-                if not row:
-                    raise HTTPException(status_code=400, detail="balance too low")
-                new_balance = int(row[0])
-
-                cur.execute(
-                    "INSERT INTO lottery_entries (hour_start, tg_user_id, qty, unit_price, total_price, created_at) "
-                    "VALUES (%s,%s,%s,%s,%s,%s)",
-                    (hs, uid, qty, ticket_price, total_price, now),
-                )
-                cur.execute(
-                    "UPDATE lotteries SET total_tickets = total_tickets + %s, total_spent = total_spent + %s "
-                    "WHERE hour_start=%s",
-                    (qty, total_price, hs),
-                )
-
-    return {
-        "ok": True,
-        "hour_start": hs,
-        "hour_end": hs + 3600,
-        "ticket_price": ticket_price,
-        "bought_qty": qty,
-        "spent": total_price,
-        "balance": new_balance,
-    }
-
-
-@app.post("/lottery/history")
-def lottery_history(req: LotteryHistoryReq):
-    uid = extract_tg_user_id(req.initData)
-    limit = max(1, min(50, int(req.limit or 10)))
-
-    with pool.connection() as con:
-        with con:
-            with con.cursor() as cur:
-                public = extract_tg_user_public(req.initData)
-                get_or_create_user(cur, uid, public)
-
-                cur.execute(
-                    "SELECT l.hour_start, l.total_spent, l.prize_amount, l.commission_amount, l.winner_user_id, l.drawn_at, "
-                    "u.username, u.first_name, u.last_name, u.photo_url "
-                    "FROM lotteries l "
-                    "LEFT JOIN users u ON u.tg_user_id = l.winner_user_id "
-                    "WHERE l.status='drawn' "
-                    "ORDER BY l.hour_start DESC LIMIT %s",
-                    (limit,),
-                )
-                rows = cur.fetchall()
-
-    items = []
-    for r in rows:
-        wuid = (str(r[4]) if r[4] else None)
-        name = None
-        avatar = None
-        if wuid:
-            name = display_name(r[6], r[7], r[8], wuid)
-            avatar = (str(r[9]).strip() if r[9] else None)
-        items.append({
-            "hour_start": int(r[0]),
-            "total_spent": int(r[1] or 0),
-            "prize_amount": int(r[2] or 0),
-            "commission_amount": int(r[3] or 0),
-            "winner_user_id": wuid,
-            "winner_name": name,
-            "winner_avatar": avatar,
-            "drawn_at": int(r[5] or 0),
-        })
-    return {"items": items}
-
-
 @app.post("/recent_wins")
 def recent_wins(req: MeReq):
     """
@@ -1525,6 +1299,219 @@ async def tg_webhook(request: Request):
 
 
 # ===== Admin API =====
+
+# ===== Lottery endpoints =====
+@app.post("/lottery/status")
+def lottery_status(req: LotteryStatusReq):
+    uid = extract_tg_user_id(req.initData)
+    public = extract_tg_user_public(req.initData)
+    now_ts = int(time.time())
+    hstart = _hour_start(now_ts)
+
+    with pool.connection() as con:
+        with con:
+            with con.cursor() as cur:
+                bal = get_or_create_user(cur, uid, public)
+
+                # finalize past rounds if needed
+                _draw_due_lotteries(cur, now_ts, max_hours_back=48)
+
+                _ensure_lottery_round(cur, hstart, now_ts)
+
+                cur.execute(
+                    """
+                    SELECT hour_start, hour_end, ticket_price, total_spent, total_tickets
+                    FROM lottery_rounds
+                    WHERE hour_start=%s
+                    """,
+                    (hstart,),
+                )
+                r = cur.fetchone()
+                if not r:
+                    raise HTTPException(status_code=500, detail="lottery round missing")
+
+                cur.execute(
+                    "SELECT COALESCE(SUM(qty),0) FROM lottery_entries WHERE hour_start=%s AND tg_user_id=%s",
+                    (hstart, uid),
+                )
+                my_qty = int(cur.fetchone()[0] or 0)
+
+                # last drawn round
+                cur.execute(
+                    """
+                    SELECT lr.hour_start, lr.winner_user_id, lr.prize_amount, lr.total_spent,
+                           u.username, u.first_name, u.last_name
+                    FROM lottery_rounds lr
+                    LEFT JOIN users u ON u.tg_user_id = lr.winner_user_id
+                    WHERE lr.drawn_at IS NOT NULL
+                    ORDER BY lr.hour_start DESC
+                    LIMIT 1
+                    """
+                )
+                last = cur.fetchone()
+                last_obj = None
+                if last and last[0]:
+                    wuid = last[1]
+                    wname = display_name(last[4] if last else None, last[5] if last else None, last[6] if last else None, str(wuid) if wuid else "")
+                    last_obj = {
+                        "hour_start": int(last[0]),
+                        "winner_user_id": str(wuid) if wuid else None,
+                        "winner_name": wname if wuid else None,
+                        "prize_amount": int(last[2] or 0),
+                        "total_spent": int(last[3] or 0),
+                    }
+
+    return {
+        "balance": int(bal),
+        "lottery": {
+            "hour_start": int(r[0]),
+            "hour_end": int(r[1]),
+            "ticket_price": int(r[2]),
+            "total_spent": int(r[3] or 0),
+            "total_tickets": int(r[4] or 0),
+            "my_tickets": int(my_qty),
+        },
+        "last": last_obj,
+    }
+
+
+@app.post("/lottery/buy")
+def lottery_buy(req: LotteryBuyReq):
+    uid = extract_tg_user_id(req.initData)
+    public = extract_tg_user_public(req.initData)
+    qty = int(req.qty or 0)
+    if qty < 1:
+        raise HTTPException(status_code=400, detail="qty must be >= 1")
+    if qty > LOTTERY_MAX_QTY:
+        raise HTTPException(status_code=400, detail=f"qty too big (max {LOTTERY_MAX_QTY})")
+
+    now_ts = int(time.time())
+    hstart = _hour_start(now_ts)
+
+    with pool.connection() as con:
+        with con:
+            with con.cursor() as cur:
+                bal = get_or_create_user(cur, uid, public)
+
+                _draw_due_lotteries(cur, now_ts, max_hours_back=48)
+                _ensure_lottery_round(cur, hstart, now_ts)
+
+                # lock round to allocate ticket range safely
+                cur.execute(
+                    "SELECT ticket_price, total_tickets, total_spent FROM lottery_rounds WHERE hour_start=%s FOR UPDATE",
+                    (hstart,),
+                )
+                row = cur.fetchone()
+                if not row:
+                    raise HTTPException(status_code=500, detail="lottery round missing")
+
+                ticket_price = int(row[0] or LOTTERY_TICKET_PRICE)
+                total_tickets = int(row[1] or 0)
+
+                cost = ticket_price * qty
+                if bal < cost:
+                    raise HTTPException(status_code=400, detail="not enough balance")
+
+                # charge
+                cur.execute("UPDATE users SET balance = balance - %s WHERE tg_user_id=%s", (cost, uid))
+
+                start_no = total_tickets + 1
+                end_no = total_tickets + qty
+
+                cur.execute(
+                    """
+                    INSERT INTO lottery_entries (hour_start, tg_user_id, qty, start_no, end_no, created_at)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    """,
+                    (hstart, uid, qty, start_no, end_no, now_ts),
+                )
+
+                cur.execute(
+                    "UPDATE lottery_rounds SET total_tickets = total_tickets + %s, total_spent = total_spent + %s WHERE hour_start=%s",
+                    (qty, cost, hstart),
+                )
+
+                cur.execute("SELECT balance FROM users WHERE tg_user_id=%s", (uid,))
+                bal2 = int(cur.fetchone()[0])
+
+                cur.execute(
+                    """
+                    SELECT hour_start, hour_end, ticket_price, total_spent, total_tickets
+                    FROM lottery_rounds
+                    WHERE hour_start=%s
+                    """,
+                    (hstart,),
+                )
+                r = cur.fetchone()
+
+                cur.execute(
+                    "SELECT COALESCE(SUM(qty),0) FROM lottery_entries WHERE hour_start=%s AND tg_user_id=%s",
+                    (hstart, uid),
+                )
+                my_qty = int(cur.fetchone()[0] or 0)
+
+    return {
+        "ok": True,
+        "spent": int(cost),
+        "balance": int(bal2),
+        "lottery": {
+            "hour_start": int(r[0]),
+            "hour_end": int(r[1]),
+            "ticket_price": int(r[2]),
+            "total_spent": int(r[3] or 0),
+            "total_tickets": int(r[4] or 0),
+            "my_tickets": int(my_qty),
+        },
+    }
+
+
+@app.post("/lottery/history")
+def lottery_history(req: LotteryHistoryReq):
+    _ = extract_tg_user_id(req.initData)  # auth
+    limit = int(req.limit or 10)
+    if limit < 1:
+        limit = 1
+    if limit > 50:
+        limit = 50
+
+    with pool.connection() as con:
+        with con:
+            with con.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT lr.hour_start, lr.total_spent, lr.total_tickets, lr.winner_user_id, lr.prize_amount,
+                           u.username, u.first_name, u.last_name
+                    FROM lottery_rounds lr
+                    LEFT JOIN users u ON u.tg_user_id = lr.winner_user_id
+                    WHERE lr.drawn_at IS NOT NULL
+                    ORDER BY lr.hour_start DESC
+                    LIMIT %s
+                    """,
+                    (limit,),
+                )
+                rows = cur.fetchall()
+
+    items = []
+    for r in rows:
+        hour_start, total_spent, total_tickets, wuid, prize_amount, username, first_name, last_name = r
+        wname = None
+        if wuid:
+            wname = display_name(username, first_name, last_name, str(wuid))
+        items.append(
+            {
+                "hour_start": int(hour_start),
+                "total_spent": int(total_spent or 0),
+                "total_tickets": int(total_tickets or 0),
+                "winner_user_id": str(wuid) if wuid else None,
+                "winner_name": wname,
+                "prize_amount": int(prize_amount or 0),
+            }
+        )
+
+    return {"items": items}
+
+
+
 @app.get("/admin/stats")
 def admin_stats(request: Request):
     require_admin(request)
@@ -1559,20 +1546,26 @@ def admin_stats(request: Request):
                     "SELECT COALESCE(SUM(stars_amount),0) FROM topups WHERE status='paid' AND paid_at >= %s",
                     (day_ago,),
                 )
+
+
+                # lottery stats
+                try:
+                    cur.execute("SELECT lottery_commission FROM house WHERE id=1")
+                    lottery_commission = int((cur.fetchone() or [0])[0] or 0)
+                except Exception:
+                    lottery_commission = 0
+
+                try:
+                    cur_h = _hour_start(now)
+                    cur.execute("SELECT total_spent, total_tickets FROM lottery_rounds WHERE hour_start=%s", (cur_h,))
+                    lr = cur.fetchone()
+                    lottery_pot_current = int(lr[0] or 0) if lr else 0
+                    lottery_tickets_current = int(lr[1] or 0) if lr else 0
+                except Exception:
+                    lottery_pot_current = 0
+                    lottery_tickets_current = 0
                 paid_stars_24h = int(cur.fetchone()[0])
 
-                # Lottery stats
-                cur.execute("SELECT COALESCE(lottery_commission,0) FROM house WHERE id=1")
-                lottery_commission_total = int((cur.fetchone() or [0])[0] or 0)
-
-                cur.execute("SELECT COUNT(*) FROM lotteries")
-                lotteries_total = int(cur.fetchone()[0])
-
-                cur.execute("SELECT COUNT(*) FROM lotteries WHERE hour_start >= %s", (day_ago,))
-                lotteries_24h = int(cur.fetchone()[0])
-
-                cur.execute("SELECT COALESCE(SUM(total_spent),0) FROM lotteries WHERE hour_start >= %s", (day_ago,))
-                lottery_spent_24h = int(cur.fetchone()[0])
     return {
         "users": users,
         "total_balance": total_balance,
@@ -1582,6 +1575,9 @@ def admin_stats(request: Request):
         "topups_24h": topups_24h,
         "paid_stars_total": paid_stars_total,
         "paid_stars_24h": paid_stars_24h,
+        "lottery_commission": lottery_commission,
+        "lottery_pot_current": lottery_pot_current,
+        "lottery_tickets_current": lottery_tickets_current,
     }
 
 
