@@ -50,6 +50,11 @@ LOTTERY_TICKET_PRICE = int(os.environ.get("LOTTERY_TICKET_PRICE", "10"))
 LOTTERY_MAX_QTY = int(os.environ.get("LOTTERY_MAX_QTY", "500"))
 LOTTERY_POLL_SEC = int(os.environ.get("LOTTERY_POLL_SEC", "15"))
 
+# ===== Lottery (10 min) =====
+LOTTERY10_TICKET_PRICE = int(os.environ.get("LOTTERY10_TICKET_PRICE", "1"))
+LOTTERY10_MAX_QTY = int(os.environ.get("LOTTERY10_MAX_QTY", "2000"))
+LOTTERY10_PERIOD_SEC = int(os.environ.get("LOTTERY10_PERIOD_SEC", "600"))
+
 # дефолтные призы (для первичного seed таблицы prizes, если она пустая)
 DEFAULT_PRIZES = [
     {"id": 1, "name": "❤️ Сердце", "cost": 15, "weight": 50, "sort_order": 10, "is_active": True},
@@ -383,6 +388,56 @@ def init_db():
                     "ON CONFLICT (id) DO NOTHING"
                 )
 
+                # ===== Lottery (10 min) tables =====
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS lottery10_rounds (
+                      period_start BIGINT PRIMARY KEY,
+                      period_end BIGINT NOT NULL,
+                      ticket_price INTEGER NOT NULL,
+                      total_spent BIGINT NOT NULL DEFAULT 0,
+                      total_tickets BIGINT NOT NULL DEFAULT 0,
+                      winner_user_id TEXT,
+                      winner_ticket_no BIGINT,
+                      prize_amount BIGINT,
+                      commission_amount BIGINT,
+                      drawn_at BIGINT
+                    )
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS lottery10_entries (
+                      id BIGSERIAL PRIMARY KEY,
+                      period_start BIGINT NOT NULL REFERENCES lottery10_rounds(period_start) ON DELETE CASCADE,
+                      tg_user_id TEXT NOT NULL REFERENCES users(tg_user_id) ON DELETE CASCADE,
+                      qty INTEGER NOT NULL,
+                      start_no BIGINT NOT NULL,
+                      end_no BIGINT NOT NULL,
+                      created_at BIGINT NOT NULL
+                    )
+                    """
+                )
+                cur.execute("ALTER TABLE lottery10_entries ADD COLUMN IF NOT EXISTS start_no BIGINT")
+                cur.execute("ALTER TABLE lottery10_entries ADD COLUMN IF NOT EXISTS end_no BIGINT")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_lottery10_entries_period_user ON lottery10_entries(period_start, tg_user_id)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_lottery10_entries_period_range ON lottery10_entries(period_start, start_no, end_no)")
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS lottery10_house (
+                      id INTEGER PRIMARY KEY,
+                      commission BIGINT NOT NULL DEFAULT 0,
+                      created_at BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::bigint),
+                      updated_at BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::bigint)
+                    )
+                    """
+                )
+                cur.execute(
+                    "INSERT INTO lottery10_house (id, commission, created_at, updated_at) "
+                    "VALUES (1, 0, EXTRACT(EPOCH FROM NOW())::bigint, EXTRACT(EPOCH FROM NOW())::bigint) "
+                    "ON CONFLICT (id) DO NOTHING"
+                )
+
                 cur.execute("SELECT COUNT(*) FROM prizes")
                 cnt = int(cur.fetchone()[0] or 0)
                 if cnt == 0:
@@ -563,6 +618,119 @@ def _hour_start(ts: int) -> int:
     return ts - (ts % 3600)
 
 
+def _period_start(ts: int, period_sec: int) -> int:
+    return ts - (ts % int(period_sec))
+
+
+def _ten_start(ts: int) -> int:
+    return _period_start(ts, LOTTERY10_PERIOD_SEC)
+
+
+def _ensure_lottery10_round(cur, period_start: int, now_ts: int) -> None:
+    period_end = period_start + int(LOTTERY10_PERIOD_SEC)
+    cur.execute(
+        """
+        INSERT INTO lottery10_rounds (period_start, period_end, ticket_price)
+        VALUES (%s, %s, %s)
+        ON CONFLICT (period_start) DO NOTHING
+        """,
+        (period_start, period_end, LOTTERY10_TICKET_PRICE),
+    )
+
+
+def _draw_lottery10_round(cur, period_start: int, now_ts: int) -> bool:
+    """Finalize a 10-minute round if ended and not drawn."""
+    cur.execute(
+        """
+        SELECT period_end, ticket_price, total_spent, total_tickets, drawn_at
+        FROM lottery10_rounds
+        WHERE period_start = %s
+        FOR UPDATE
+        """,
+        (period_start,),
+    )
+    row = cur.fetchone()
+    if not row:
+        return False
+
+    period_end, ticket_price, total_spent, total_tickets, drawn_at = row
+    period_end = int(period_end)
+    total_spent = int(total_spent or 0)
+    total_tickets = int(total_tickets or 0)
+    if drawn_at is not None:
+        return False
+    if period_end > now_ts:
+        return False
+
+    if total_tickets <= 0 or total_spent <= 0:
+        cur.execute(
+            "UPDATE lottery10_rounds SET drawn_at=%s, prize_amount=0, commission_amount=0 WHERE period_start=%s",
+            (now_ts, period_start),
+        )
+        return True
+
+    win_no = random.randint(1, total_tickets)
+
+    cur.execute(
+        """
+        SELECT tg_user_id
+        FROM lottery10_entries
+        WHERE period_start=%s AND start_no IS NOT NULL AND end_no IS NOT NULL AND start_no<=%s AND end_no>=%s
+        LIMIT 1
+        """,
+        (period_start, win_no, win_no),
+    )
+    w = cur.fetchone()
+    if not w:
+        cur.execute(
+            "UPDATE lottery10_rounds SET drawn_at=%s, prize_amount=0, commission_amount=0 WHERE period_start=%s",
+            (now_ts, period_start),
+        )
+        return True
+
+    winner_uid = str(w[0])
+
+    prize = (total_spent * 80) // 100
+    commission = total_spent - prize
+
+    cur.execute("UPDATE users SET balance = balance + %s WHERE tg_user_id=%s", (prize, winner_uid))
+    cur.execute("UPDATE lottery10_house SET commission = commission + %s, updated_at = %s WHERE id=1", (commission, int(time.time())))
+
+    cur.execute(
+        """
+        UPDATE lottery10_rounds
+        SET winner_user_id=%s,
+            winner_ticket_no=%s,
+            prize_amount=%s,
+            commission_amount=%s,
+            drawn_at=%s
+        WHERE period_start=%s
+        """,
+        (winner_uid, win_no, prize, commission, now_ts, period_start),
+    )
+    return True
+
+
+def _draw_due_lottery10(cur, now_ts: int, limit: int = 400) -> int:
+    """Finalize due 10-minute rounds. Returns count."""
+    finalized = 0
+    cur.execute(
+        """
+        SELECT period_start
+        FROM lottery10_rounds
+        WHERE drawn_at IS NULL AND period_end <= %s
+        ORDER BY period_start DESC
+        LIMIT %s
+        """,
+        (now_ts, int(limit)),
+    )
+    rows = cur.fetchall() or []
+    for (ps,) in rows:
+        if _draw_lottery10_round(cur, int(ps), now_ts):
+            finalized += 1
+    return finalized
+
+
 def _ensure_lottery_round(cur, hour_start: int, now_ts: int) -> None:
     hour_end = hour_start + 3600
     cur.execute(
@@ -680,6 +848,7 @@ async def lottery_worker():
                 with con:
                     with con.cursor() as cur:
                         _draw_due_lotteries(cur, now_ts, max_hours_back=48)
+                        _draw_due_lottery10(cur, now_ts, limit=400)
         except Exception as e:
             try:
                 print("lottery_worker error:", e)
@@ -1519,6 +1688,214 @@ def lottery_history(req: LotteryHistoryReq):
 
     return {"items": items}
 
+# ===== Lottery (10 min) endpoints =====
+@app.post("/lottery10/status")
+def lottery10_status(req: LotteryStatusReq):
+    uid = extract_tg_user_id(req.initData)
+    public = extract_tg_user_public(req.initData)
+    now_ts = int(time.time())
+    pstart = _ten_start(now_ts)
+
+    with pool.connection() as con:
+        with con:
+            with con.cursor() as cur:
+                bal = get_or_create_user(cur, uid, public)
+
+                _draw_due_lottery10(cur, now_ts, limit=400)
+                _ensure_lottery10_round(cur, pstart, now_ts)
+
+                cur.execute(
+                    """
+                    SELECT period_start, period_end, ticket_price, total_spent, total_tickets
+                    FROM lottery10_rounds
+                    WHERE period_start=%s
+                    """,
+                    (pstart,),
+                )
+                r = cur.fetchone()
+                if not r:
+                    raise HTTPException(status_code=500, detail="lottery round missing")
+
+                cur.execute(
+                    "SELECT COALESCE(SUM(qty),0) FROM lottery10_entries WHERE period_start=%s AND tg_user_id=%s",
+                    (pstart, uid),
+                )
+                my_qty = int(cur.fetchone()[0] or 0)
+
+                cur.execute(
+                    """
+                    SELECT lr.period_start, lr.winner_user_id, lr.prize_amount, lr.total_spent,
+                           u.username, u.first_name, u.last_name
+                    FROM lottery10_rounds lr
+                    LEFT JOIN users u ON u.tg_user_id = lr.winner_user_id
+                    WHERE lr.drawn_at IS NOT NULL
+                    ORDER BY lr.period_start DESC
+                    LIMIT 1
+                    """
+                )
+                last = cur.fetchone()
+                last_obj = None
+                if last and last[0]:
+                    wuid = last[1]
+                    wname = display_name(last[4] if last else None, last[5] if last else None, last[6] if last else None, str(wuid) if wuid else "")
+                    last_obj = {
+                        "period_start": int(last[0]),
+                        "winner_user_id": str(wuid) if wuid else None,
+                        "winner_name": wname if wuid else None,
+                        "prize_amount": int(last[2] or 0),
+                        "total_spent": int(last[3] or 0),
+                    }
+
+    return {
+        "balance": int(bal),
+        "lottery": {
+            "period_sec": int(LOTTERY10_PERIOD_SEC),
+            "period_start": int(r[0]),
+            "period_end": int(r[1]),
+            "ticket_price": int(r[2]),
+            "total_spent": int(r[3] or 0),
+            "total_tickets": int(r[4] or 0),
+            "my_tickets": int(my_qty),
+        },
+        "last": last_obj,
+    }
+
+
+@app.post("/lottery10/buy")
+def lottery10_buy(req: LotteryBuyReq):
+    uid = extract_tg_user_id(req.initData)
+    public = extract_tg_user_public(req.initData)
+    qty = int(req.qty or 0)
+    if qty < 1:
+        raise HTTPException(status_code=400, detail="qty must be >= 1")
+    if qty > LOTTERY10_MAX_QTY:
+        raise HTTPException(status_code=400, detail=f"qty too big (max {LOTTERY10_MAX_QTY})")
+
+    now_ts = int(time.time())
+    pstart = _ten_start(now_ts)
+
+    with pool.connection() as con:
+        with con:
+            with con.cursor() as cur:
+                bal = get_or_create_user(cur, uid, public)
+
+                _draw_due_lottery10(cur, now_ts, limit=400)
+                _ensure_lottery10_round(cur, pstart, now_ts)
+
+                cur.execute(
+                    "SELECT ticket_price, total_tickets, total_spent FROM lottery10_rounds WHERE period_start=%s FOR UPDATE",
+                    (pstart,),
+                )
+                row = cur.fetchone()
+                if not row:
+                    raise HTTPException(status_code=500, detail="lottery round missing")
+
+                ticket_price = int(row[0] or LOTTERY10_TICKET_PRICE)
+                total_tickets = int(row[1] or 0)
+
+                cost = ticket_price * qty
+                if bal < cost:
+                    raise HTTPException(status_code=400, detail="not enough balance")
+
+                cur.execute("UPDATE users SET balance = balance - %s WHERE tg_user_id=%s", (cost, uid))
+
+                start_no = total_tickets + 1
+                end_no = total_tickets + qty
+
+                cur.execute(
+                    """
+                    INSERT INTO lottery10_entries (period_start, tg_user_id, qty, start_no, end_no, created_at)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    """,
+                    (pstart, uid, qty, start_no, end_no, now_ts),
+                )
+
+                cur.execute(
+                    "UPDATE lottery10_rounds SET total_tickets = total_tickets + %s, total_spent = total_spent + %s WHERE period_start=%s",
+                    (qty, cost, pstart),
+                )
+
+                cur.execute("SELECT balance FROM users WHERE tg_user_id=%s", (uid,))
+                bal2 = int(cur.fetchone()[0])
+
+                cur.execute(
+                    """
+                    SELECT period_start, period_end, ticket_price, total_spent, total_tickets
+                    FROM lottery10_rounds
+                    WHERE period_start=%s
+                    """,
+                    (pstart,),
+                )
+                r = cur.fetchone()
+
+                cur.execute(
+                    "SELECT COALESCE(SUM(qty),0) FROM lottery10_entries WHERE period_start=%s AND tg_user_id=%s",
+                    (pstart, uid),
+                )
+                my_qty = int(cur.fetchone()[0] or 0)
+
+    return {
+        "ok": True,
+        "spent": int(cost),
+        "balance": int(bal2),
+        "lottery": {
+            "period_sec": int(LOTTERY10_PERIOD_SEC),
+            "period_start": int(r[0]),
+            "period_end": int(r[1]),
+            "ticket_price": int(r[2]),
+            "total_spent": int(r[3] or 0),
+            "total_tickets": int(r[4] or 0),
+            "my_tickets": int(my_qty),
+        },
+    }
+
+
+@app.post("/lottery10/history")
+def lottery10_history(req: LotteryHistoryReq):
+    _ = extract_tg_user_id(req.initData)
+    limit = int(req.limit or 10)
+    if limit < 1:
+        limit = 1
+    if limit > 80:
+        limit = 80
+
+    with pool.connection() as con:
+        with con:
+            with con.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT lr.period_start, lr.total_spent, lr.total_tickets, lr.winner_user_id, lr.prize_amount,
+                           u.username, u.first_name, u.last_name
+                    FROM lottery10_rounds lr
+                    LEFT JOIN users u ON u.tg_user_id = lr.winner_user_id
+                    WHERE lr.drawn_at IS NOT NULL
+                    ORDER BY lr.period_start DESC
+                    LIMIT %s
+                    """,
+                    (limit,),
+                )
+                rows = cur.fetchall()
+
+    items = []
+    for r in rows:
+        period_start, total_spent, total_tickets, wuid, prize_amount, username, first_name, last_name = r
+        wname = None
+        if wuid:
+            wname = display_name(username, first_name, last_name, str(wuid))
+        items.append(
+            {
+                "period_start": int(period_start),
+                "total_spent": int(total_spent or 0),
+                "total_tickets": int(total_tickets or 0),
+                "winner_user_id": str(wuid) if wuid else None,
+                "winner_name": wname,
+                "prize_amount": int(prize_amount or 0),
+            }
+        )
+
+    return {"items": items}
+
+
 
 
 @app.get("/admin/stats")
@@ -1573,6 +1950,24 @@ def admin_stats(request: Request):
                 except Exception:
                     lottery_pot_current = 0
                     lottery_tickets_current = 0
+
+                # 10-min lottery stats
+                try:
+                    cur.execute("SELECT commission FROM lottery10_house WHERE id=1")
+                    lottery10_commission = int((cur.fetchone() or [0])[0] or 0)
+                except Exception:
+                    lottery10_commission = 0
+
+                try:
+                    cur_p = _ten_start(now)
+                    cur.execute("SELECT total_spent, total_tickets FROM lottery10_rounds WHERE period_start=%s", (cur_p,))
+                    lr10 = cur.fetchone()
+                    lottery10_pot_current = int(lr10[0] or 0) if lr10 else 0
+                    lottery10_tickets_current = int(lr10[1] or 0) if lr10 else 0
+                except Exception:
+                    lottery10_pot_current = 0
+                    lottery10_tickets_current = 0
+
                 paid_stars_24h = int(cur.fetchone()[0])
 
     return {
@@ -1587,6 +1982,9 @@ def admin_stats(request: Request):
         "lottery_commission": lottery_commission,
         "lottery_pot_current": lottery_pot_current,
         "lottery_tickets_current": lottery_tickets_current,
+        "lottery10_commission": lottery10_commission,
+        "lottery10_pot_current": lottery10_pot_current,
+        "lottery10_tickets_current": lottery10_tickets_current,
     }
 
 
