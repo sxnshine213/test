@@ -1,12 +1,12 @@
 <!DOCTYPE html>
+
 <html lang="ru">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>archicasino</title>
-  <script src="https://telegram.org/js/telegram-web-app.js"></script>
-
-  <style>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>archicasino</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
     * { box-sizing: border-box; }
     body {
       margin: 0;
@@ -14,12 +14,14 @@
       background: linear-gradient(180deg, #0e1724, #0b1320);
       color: #fff;
     }
-    .app {
+    
+    :root{ --block-gap: 4px; }
+.app {
       max-width: 420px;
       min-height: 100vh;
       margin: 0 auto;
       padding: 12px;
-      padding-bottom: 86px;
+      padding-bottom: 108px;
       display: flex;
       flex-direction: column;
       gap: 14px;
@@ -187,6 +189,16 @@
       opacity: 0.85;
     }
 
+
+    /* Global small spacing between main blocks so they don't visually merge */
+    #screenRoulette{
+      display:flex;
+      flex-direction:column;
+      gap: 8px;
+    }
+    #screenRoulette > .recent-wins{ margin: 0; }
+    #screenRoulette > .case-hint{ margin-top: 0; }
+
     /* Inventory / Top common */
     .inv {
       background: radial-gradient(circle at center, #18263c, #0f1a2b);
@@ -194,10 +206,11 @@
       padding: 14px;
     }
     .inv-title {
-      font-weight: 800;
-      font-size: 14px;
-      margin-bottom: 10px;
-      opacity: 0.95;
+      font-weight: 900;
+      font-size: 16px;
+      margin-bottom: 12px;
+      opacity: 0.98;
+      text-align: center;
     }
     .inv-list {
       display: grid;
@@ -220,30 +233,73 @@
     .inv-name { font-size: 12px; font-weight: 800; }
     .inv-sub { font-size: 11px; opacity: 0.75; }
 
-    /* Bottom tabs */
-    .bottom-nav {
-      position: fixed;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      max-width: 420px;
-      margin: 0 auto;
+
+    .inv-empty-card{
+      background: #232f41;
+      border-radius: 18px;
+      padding: 22px 18px;
       display: flex;
-      justify-content: space-around;
-      border-top: 1px solid #1f324a;
-      padding: 10px 0 calc(10px + env(safe-area-inset-bottom));
-      background: #0b1320;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.06);
+      min-height: 140px;
+    }
+    .inv-empty-ico{opacity:.95;}
+    .inv-empty-text{
+      font-weight: 800;
+      font-size: 14px;
+      opacity: 0.95;
+      text-align: center;
+      line-height: 1.2;
+    }
+    /* Bottom tabs */
+    .bottom-nav{
+      position: fixed;
+      left: 50%;
+      transform: translateX(-50%);
+      bottom: calc(12px + env(safe-area-inset-bottom));
+      width: min(420px, calc(100% - 24px));
+      display: flex;
+      gap: 6px;
+      padding: 8px;
+      border-radius: 26px;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.08);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      box-shadow: 0 10px 26px rgba(0,0,0,0.35);
       z-index: 999;
     }
-    .nav {
-      font-size: 12px;
-      color: #7f93aa;
+    .nav{
+      flex: 1;
+      height: 58px;
+      border-radius: 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      font-size: 11px;
+      font-weight: 600;
+      color: rgba(231,241,255,0.70);
       text-align: center;
       user-select: none;
       -webkit-user-select: none;
       cursor: pointer;
+      transition: background .15s ease, color .15s ease, transform .15s ease;
     }
-    .nav.active { color: #4aa3ff; }
+    .nav:active{ transform: scale(0.98); }
+    .nav .nav-icon{ font-size: 22px; line-height: 1; }
+    .nav .nav-label{ line-height: 1.1; letter-spacing: .1px; }
+    .nav.active{
+      background: rgba(74,163,255,0.14);
+      border: 1px solid rgba(74,163,255,0.28);
+      color: #eaf2ff;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.05);
+    }
 
     /* Prize claim sheet */
     #claimBackdrop {
@@ -334,14 +390,15 @@
       margin: 10px 0 0;
       padding: 10px 10px;
       border-radius: 14px;
-      background: rgba(255,255,255,0.06);
-      border: 1px solid rgba(255,255,255,0.08);
+      background: #162235;
+      border: 1px solid rgba(255,255,255,0.10);
     }
     .recent-wins__title{
-      font-size: 12px;
-      opacity: .75;
+      font-size: 13px;
+      opacity: .85;
       margin-bottom: 8px;
-      font-weight: 800;
+      font-weight: 900;
+      text-align: center;
     }
     .recent-wins__list{
       display: flex;
@@ -393,7 +450,8 @@
       margin-top:10px;
       opacity:.85;
       font-size:13px;
-    }
+          display:none;
+}
     .inv-actions{
       margin-top:8px;
       display:flex;
@@ -413,194 +471,345 @@
       opacity:.45;
       cursor:not-allowed;
     }
+
+
+/* ===== Lottery redesign (like screenshot) ===== */
+.lot-screen{padding:0;margin:0;}
+.lot-page{padding:14px 14px 18px 14px;}
+.lot-top{display:flex;flex-direction:column;align-items:center;gap:10px;margin-top:2px;}
+.ticket-badge{
+  width:84px;height:56px;border-radius:14px;
+  background:linear-gradient(180deg,#ff6b7c,#ff8a9a);
+  position:relative;display:flex;align-items:center;justify-content:center;
+  box-shadow:0 10px 24px rgba(255,107,124,.20);
+}
+.ticket-badge:before,.ticket-badge:after{
+  content:"";position:absolute;top:50%;transform:translateY(-50%);
+  width:14px;height:14px;border-radius:50%;
+  background:#0f1823;
+  opacity:.85;
+}
+.ticket-badge:before{left:-7px;}
+.ticket-badge:after{right:-7px;}
+.ticket-text{font-weight:900;letter-spacing:.5px;line-height:1;color:#2b0b10;text-align:center;}
+.ticket-text .t1{font-size:12px;}
+.ticket-text .t2{font-size:14px;margin-top:2px;}
+.lot-h1{font-size:28px;font-weight:900;margin-top:4px;}
+.lot-sub{opacity:.9;text-align:center;max-width:320px;line-height:1.35;font-weight:700;}
+.lot-history-link{
+  display:flex;align-items:center;gap:8px;
+  background:transparent;border:0;color:#57a9ff;
+  font-weight:900;font-size:15px;cursor:pointer;
+}
+.lot-history-chev{opacity:.8;margin-left:2px;}
+.lot-seg{
+  width:100%;max-width:340px;
+  background:rgba(255,255,255,.06);
+  border:1px solid rgba(255,255,255,.07);
+  border-radius:16px;
+  display:flex;
+  padding:4px;
+  margin-top:6px;
+}
+.lot-seg-btn{
+  flex:1;border:0;background:transparent;color:#cfe5ff;
+  padding:10px 10px;border-radius:12px;font-weight:900;cursor:pointer;
+}
+.lot-seg-btn.active{
+  background:rgba(0,0,0,.22);
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.06);
+  color:#ffffff;
+}
+.lot-day-pill{
+  margin-top:4px;
+  background:rgba(255,255,255,.06);
+  border:1px solid rgba(255,255,255,.07);
+  border-radius:999px;
+  padding:8px 12px;
+  font-weight:900;
+  font-size:12px;
+  opacity:.95;
+}
+.lot-view{width:100%;margin-top:14px;}
+.lot-card{
+  border-radius:18px;
+  padding:14px;
+  position:relative;
+  overflow:hidden;
+  margin-top:12px;
+  background:
+    radial-gradient(circle at 18% 24%, rgba(255,255,255,.18) 0 2px, transparent 3px),
+    radial-gradient(circle at 32% 42%, rgba(255,255,255,.12) 0 2px, transparent 3px),
+    radial-gradient(circle at 52% 18%, rgba(255,255,255,.14) 0 2px, transparent 3px),
+    radial-gradient(circle at 70% 60%, rgba(255,255,255,.10) 0 2px, transparent 3px),
+    linear-gradient(180deg, rgba(255,132,93,.95), rgba(214,116,86,.95));
+  box-shadow:0 12px 26px rgba(0,0,0,.30);
+}
+.lot-card-10{
+  background:
+    radial-gradient(circle at 18% 24%, rgba(255,255,255,.16) 0 2px, transparent 3px),
+    radial-gradient(circle at 52% 18%, rgba(255,255,255,.12) 0 2px, transparent 3px),
+    radial-gradient(circle at 70% 60%, rgba(255,255,255,.10) 0 2px, transparent 3px),
+    linear-gradient(180deg, rgba(255,132,93,.82), rgba(214,116,86,.82));
+}
+.lot-card-main{padding-right:88px;}
+.lot-card-title{font-weight:900;font-size:16px;}
+.lot-card-sub{margin-top:6px;opacity:.92;font-weight:800;}
+.lot-card-art{
+  position:absolute;right:14px;top:18px;
+  width:72px;height:72px;border-radius:18px;
+  display:flex;align-items:center;justify-content:center;
+  background:rgba(0,0,0,.12);
+  font-size:34px;
+}
+.lot-card-btn{
+  margin-top:10px;
+  border:0;
+  padding:10px 12px;
+  border-radius:999px;
+  background:rgba(0,0,0,.18);
+  color:#fff;
+  font-weight:900;
+  cursor:pointer;
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+}
+.lot-card-btn:active{transform:scale(.99);}
+.lot-card-footer{
+  margin-top:12px;
+  padding-top:10px;
+  border-top:1px solid rgba(255,255,255,.18);
+  font-size:12px;
+  opacity:.95;
+  font-weight:800;
+}
+.lot-muted{opacity:.85;}
+.lot-dot{opacity:.75;margin:0 6px;}
+.lot-mine{
+  background:rgba(255,255,255,.06);
+  border:1px solid rgba(255,255,255,.07);
+  border-radius:18px;
+  padding:14px;
+}
+.lot-mine-title{font-weight:900;font-size:15px;margin-bottom:10px;}
+.lot-metric .lab{opacity:.8;font-size:12px;font-weight:900;}
+.lot-metric .val{margin-top:4px;font-weight:900;font-size:18px;}
+.lot-metric .hint{margin-top:2px;opacity:.85;font-size:12px;font-weight:800;}
+.lot-buy{margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
+.lot-mini{
+  border:1px solid rgba(255,255,255,.10);
+  background:rgba(0,0,0,.20);
+  color:#fff;
+  border-radius:12px;
+  padding:10px 12px;
+  font-weight:900;
+  cursor:pointer;
+}
+.lot-input{
+  width:110px;
+  border-radius:12px;
+  border:1px solid rgba(255,255,255,.10);
+  background:rgba(0,0,0,.18);
+  color:#fff;
+  padding:10px 12px;
+  font-weight:900;
+}
+.lot-hint{
+  margin-top:10px;
+  opacity:.85;
+  font-size:12px;
+  font-weight:800;
+  line-height:1.35;
+}
+.lot-last{margin-top:12px;}
+.lot-last-title{opacity:.8;font-size:12px;font-weight:900;}
+.lot-last-body{margin-top:6px;background:rgba(0,0,0,.18);border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:10px 12px;font-weight:800;font-size:12px;line-height:1.35;}
+.lot-history{margin-top:14px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.07);border-radius:18px;padding:14px;}
+.lot-history-title{font-weight:900;margin-bottom:8px;}
+.lot-history-body{opacity:.9;font-weight:800;font-size:12px;line-height:1.45;}
+.lot-error{margin-top:12px;color:#ff8a9a;font-weight:900;}
 </style>
 </head>
-
 <body>
-  <div class="app">
-    <div class="header">
-      <div>archicasino</div>
-      <div style="display:flex; gap:8px; align-items:center;">
-        <div id="balanceBadge" style="font-weight:800;font-size:13px;background:#162235;padding:6px 10px;border-radius:999px;">⭐ …</div>
-        <div id="topupBtn" style="font-weight:900;font-size:13px;background:#5b8ecb;padding:6px 10px;border-radius:999px;cursor:pointer;user-select:none;-webkit-user-select:none;">
+<div class="app">
+<div class="header">
+<div>archicasino</div>
+<div style="display:flex; gap:8px; align-items:center;">
+<div id="balanceBadge" style="font-weight:800;font-size:13px;background:#162235;padding:6px 10px;border-radius:999px;">⭐ …</div>
+<div id="topupBtn" style="font-weight:900;font-size:13px;background:#5b8ecb;padding:6px 10px;border-radius:999px;cursor:pointer;user-select:none;-webkit-user-select:none;">
           ➕
         </div>
-      </div>
-    </div>
+</div>
+</div>
+<div id="screenRoulette">
+<div class="recent-wins" id="recentWins" style="display:none;">
+<div class="recent-wins__title">Недавние выигрыши</div>
+<div class="recent-wins__list" id="recentWinsList"></div>
+</div>
+<div class="cases-grid" id="casesTabs"></div>
+<div class="case-hint" id="caseHint"></div>
+<div class="roulette-wrap">
+<div class="roulette" data-initialized="false" id="roulette">
+<div class="item" data-id="1"><img src="https://emojiapi.dev/api/v1/heart_with_ribbon/128.png"/><div class="price">⭐ 15</div></div>
+<div class="item" data-id="2"><img src="https://emojiapi.dev/api/v1/teddy_bear/128.png"/><div class="price">⭐ 25</div></div>
+<div class="item" data-id="4"><img src="https://emojiapi.dev/api/v1/gem_stone/128.png"/><div class="price">⭐ 100</div></div>
+<div class="item" data-id="3"><img src="https://emojiapi.dev/api/v1/birthday_cake/128.png"/><div class="price">⭐ 50</div></div>
+<div class="item" data-id="5"><img src="https://emojiapi.dev/api/v1/rose/128.png"/><div class="price">⭐ 25</div></div>
+</div>
+<div class="pointer"></div>
+</div>
+<div class="switch">Демо режим <input type="checkbox"/></div>
+<button class="spin" id="spinBtn">Мне повезёт! 🎰</button>
+</div>
+<div id="screenInventory" style="display:none;">
+<div class="inv">
+<div class="inv-title">🎒 Инвентарь</div>
+<div id="inventoryEmpty" class="inv-empty-card" style="margin:0;">
+  <div class="inv-empty-ico" aria-hidden="true">
+    <svg viewBox="0 0 140 100" width="110" height="80" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="f1" x1="0" x2="0" y1="0" y2="1">
+          <stop offset="0" stop-color="#f4f7fb"/>
+          <stop offset="1" stop-color="#b8c4d2"/>
+        </linearGradient>
+        <linearGradient id="f2" x1="0" x2="1" y1="0" y2="0">
+          <stop offset="0" stop-color="#8ea0b3"/>
+          <stop offset="1" stop-color="#cfd9e4"/>
+        </linearGradient>
+        <filter id="sh" x="-20%" y="-20%" width="140%" height="160%">
+          <feDropShadow dx="0" dy="6" stdDeviation="4" flood-color="#000" flood-opacity=".35"/>
+        </filter>
+      </defs>
 
-    <div id="screenRoulette">
-<div id="recentWins" class="recent-wins" style="display:none;">
-        <div class="recent-wins__title">Недавние выигрыши</div>
-        <div id="recentWinsList" class="recent-wins__list"></div>
-      </div>
+      <!-- back panel -->
+      <path d="M22 30h96c6 0 10 4 10 10v40c0 6-4 10-10 10H22c-6 0-10-4-10-10V40c0-6 4-10 10-10z"
+            fill="url(#f2)" opacity=".35"/>
 
-
-      <div class="cases-grid" id="casesTabs"></div>
-      <div class="case-hint" id="caseHint"></div>
-
-      <div class="roulette-wrap">
-        <div class="roulette" id="roulette" data-initialized="false">
-          <div class="item" data-id="1"><img src="https://emojiapi.dev/api/v1/heart_with_ribbon/128.png"><div class="price">⭐ 15</div></div>
-          <div class="item" data-id="2"><img src="https://emojiapi.dev/api/v1/teddy_bear/128.png"><div class="price">⭐ 25</div></div>
-          <div class="item" data-id="4"><img src="https://emojiapi.dev/api/v1/gem_stone/128.png"><div class="price">⭐ 100</div></div>
-          <div class="item" data-id="3"><img src="https://emojiapi.dev/api/v1/birthday_cake/128.png"><div class="price">⭐ 50</div></div>
-          <div class="item" data-id="5"><img src="https://emojiapi.dev/api/v1/rose/128.png"><div class="price">⭐ 25</div></div>
-        </div>
-        <div class="pointer"></div>
-      </div>
-
-      <div class="switch">Демо режим <input type="checkbox"></div>
-      <button class="spin" id="spinBtn">Мне повезёт! 🎰</button>
-    </div>
-
-    <div id="screenInventory" style="display:none;">
-      <div class="inv">
-        <div class="inv-title">🎒 Инвентарь</div>
-        <div id="inventoryEmpty" class="section" style="margin:0;">Пока пусто — крути рулетку 😊</div>
-        <div id="inventoryList" class="inv-list" style="display:none;"></div>
-      </div>
-    </div>
-
-    <div id="screenTop" style="display:none;">
-      <div class="inv">
-        <div class="inv-title">🏆 Лидерборд</div>
-        <div id="topMe" class="section" style="margin:0 0 10px 0;">—</div>
-        <div id="topList" class="inv-list" style="grid-template-columns: 1fr;"></div>
-      </div>
-
-    </div>
-
-    <div id="screenLottery" style="display:none;">
-      <div class="inv">
-        <div class="inv-title">🎟️ Лотерея (каждый час)</div>
-
-        <div id="lotteryCountdown" class="section" style="margin:0;">—</div>
-
-        <div style="margin-top:10px; display:flex; gap:10px; flex-wrap:wrap;">
-          <div style="background:#162235;border-radius:14px;padding:10px 12px;flex:1;min-width:150px;">
-            <div style="opacity:.75;font-size:12px;font-weight:800;">Пот</div>
-            <div id="lotteryPot" style="font-weight:900;font-size:18px;margin-top:4px;">—</div>
-            <div id="lotteryPrize" style="opacity:.8;font-size:12px;margin-top:4px;">—</div>
-          </div>
-          <div style="background:#162235;border-radius:14px;padding:10px 12px;flex:1;min-width:150px;">
-            <div style="opacity:.75;font-size:12px;font-weight:800;">Мои билеты</div>
-            <div id="lotteryMy" style="font-weight:900;font-size:18px;margin-top:4px;">—</div>
-            <div id="lotteryTicketPrice" style="opacity:.8;font-size:12px;margin-top:4px;">—</div>
-          </div>
-        </div>
-      </div>
-
-      <div class="inv" style="margin-top:12px;">
-        <div class="inv-title">Купить билеты</div>
-        <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
-          <button class="btn-mini" id="lotteryBuy1">+1</button>
-          <button class="btn-mini" id="lotteryBuy5">+5</button>
-          <input id="lotteryQty" type="number" min="1" value="10"
-                 style="width:110px;border-radius:12px;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.08);color:#fff;padding:8px 10px;font-weight:800;">
-          <button class="btn-mini" id="lotteryBuyQty">Купить</button>
-        </div>
-        <div id="lotteryBuyHint" class="section" style="margin:10px 0 0 0;">—</div>
-      </div>
-
-      <div class="inv" style="margin-top:12px;">
-        <div class="inv-title">Последний победитель</div>
-        <div id="lotteryLast" class="section" style="margin:0;">—</div>
-      </div>
-      <div class="inv" style="margin-top:16px;">
-        <div class="inv-title">⏱️ Лотерея (каждые 10 минут)</div>
-
-        <div id="lottery10Countdown" class="section" style="margin:0;">—</div>
-
-        <div style="margin-top:10px; display:flex; gap:10px; flex-wrap:wrap;">
-          <div style="background:#162235;border-radius:14px;padding:10px 12px;flex:1;min-width:150px;">
-            <div style="opacity:.75;font-size:12px;font-weight:800;">Пот</div>
-            <div id="lottery10Pot" style="font-weight:900;font-size:18px;margin-top:4px;">—</div>
-            <div id="lottery10Prize" style="opacity:.8;font-size:12px;margin-top:4px;">—</div>
-          </div>
-          <div style="background:#162235;border-radius:14px;padding:10px 12px;flex:1;min-width:150px;">
-            <div style="opacity:.75;font-size:12px;font-weight:800;">Мои билеты</div>
-            <div id="lottery10My" style="font-weight:900;font-size:18px;margin-top:4px;">—</div>
-            <div id="lottery10TicketPrice" style="opacity:.8;font-size:12px;margin-top:4px;">—</div>
-          </div>
-        </div>
-      </div>
-
-      <div class="inv" style="margin-top:12px;">
-        <div class="inv-title">Купить билеты (10 мин)</div>
-        <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
-          <button class="btn-mini" id="lottery10Buy1">+1</button>
-          <button class="btn-mini" id="lottery10Buy10">+10</button>
-          <input id="lottery10Qty" type="number" min="1" value="50"
-                 style="width:110px;border-radius:12px;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.08);color:#fff;padding:8px 10px;font-weight:800;">
-          <button class="btn-mini" id="lottery10BuyQty">Купить</button>
-        </div>
-        <div id="lottery10BuyHint" class="section" style="margin:10px 0 0 0;">—</div>
-      </div>
-
-      <div class="inv" style="margin-top:12px;">
-        <div class="inv-title">Последний победитель (10 мин)</div>
-        <div id="lottery10Last" class="section" style="margin:0;">—</div>
-      </div>
-
-
-    </div>
-
+      <!-- folder -->
+      <g filter="url(#sh)">
+        <path d="M26 34h34l8-10h46c7 0 12 5 12 12v44c0 7-5 12-12 12H26c-7 0-12-5-12-12V46c0-7 5-12 12-12z"
+              fill="#d4dde8"/>
+        <path d="M14 48h112v30c0 7-5 12-12 12H26c-7 0-12-5-12-12V48z"
+              fill="url(#f1)"/>
+        <path d="M26 34h34l8-10h46c7 0 12 5 12 12v44c0 7-5 12-12 12H26c-7 0-12-5-12-12V46c0-7 5-12 12-12z"
+              fill="none" stroke="#aab6c5" stroke-width="2" opacity=".9"/>
+      </g>
+    </svg>
   </div>
-
-  <div class="bottom-nav">
-    <div class="nav active" id="tabSpin">🎰 Рулетка</div>
-    <div class="nav" id="tabLottery">🎟️ Лотерея</div>
-    <div class="nav" id="tabInv">🎒 Инвентарь</div>
-    <div class="nav" id="tabTop">🏆 Топ</div>
-  </div>
-
-  <!-- Claim UI -->
-  <div id="claimBackdrop"></div>
-  <div id="claimSheet">
-    <div class="claim-head">
-      <div class="claim-title">🎉 Ваш приз</div>
-      <div class="claim-close" id="claimClose">✕</div>
-    </div>
-
-    <div class="claim-row">
-      <img id="claimImg" src="" alt="prize">
-      <div style="display:flex; flex-direction:column; gap:4px;">
-        <div id="claimName" class="claim-name">—</div>
-        <div id="claimMeta" class="claim-meta">—</div>
-      </div>
-    </div>
-
-    <div class="claim-actions">
-      <button class="btn btn-sell" id="btnSell">Продать</button>
-      <button class="btn btn-keep" id="btnKeep">Забрать</button>
-    </div>
-
-    <div class="claim-hint">Выберите действие: продать за ⭐ или добавить в инвентарь.</div>
-  </div>
-
-  <!-- Topup UI -->
-  <div id="topupBackdrop"></div>
-  <div id="topupSheet">
-    <div class="claim-head" style="margin-bottom:6px;">
-      <div class="topup-title">⭐ Пополнение</div>
-      <div class="claim-close" id="topupClose">✕</div>
-    </div>
-
-    <div class="topup-grid">
-      <div class="topup-pack" data-stars="50">50 ⭐<small>быстро</small></div>
-      <div class="topup-pack" data-stars="100">100 ⭐<small>оптимально</small></div>
-      <div class="topup-pack" data-stars="250">250 ⭐<small>выгодно</small></div>
-    </div>
-
-    <div class="topup-footer">
-      <button class="btn topup-cancel" id="topupCancel">Отмена</button>
-      <button class="btn topup-buy" id="topupBuy" disabled>Пополнить</button>
-    </div>
-
-    <div class="topup-note">Оплата откроется в Telegram. Баланс обновится после успешного платежа.</div>
-  </div>
-
-  <script>
+  <div class="inv-empty-text">Нет нераспределённых подарков</div>
+</div>
+<div class="inv-list" id="inventoryList" style="display:none;"></div>
+</div>
+</div>
+<div id="screenTop" style="display:none;">
+<div class="inv">
+<div class="inv-title">🏆 Лидерборд</div>
+<div class="section" id="topMe" style="margin:0 0 10px 0;">—</div>
+<div class="inv-list" id="topList" style="grid-template-columns: 1fr;"></div>
+</div>
+</div>
+<div class="lot-screen" id="screenLottery" style="display:none;">
+<div class="lot-page">
+<div class="lot-top">
+<div class="ticket-badge">
+<div class="ticket-text">
+<div class="t1">ADMIT</div>
+<div class="t2">ONE</div>
+</div>
+</div>
+<div class="lot-h1">Лотереи</div>
+<div class="lot-sub">Участвуйте в лотереях и выигрывайте уникальные подарки</div>
+<button class="lot-history-link" id="lotteryHistoryOpen" type="button">
+<span class="lot-history-ico">🕘</span>
+<span>История лотерей</span>
+<span class="lot-history-chev">›</span>
+</button>
+<div class="lot-day-pill" id="lotteryDayPill">В этот день — … 💡</div>
+</div>
+<div class="lot-view" id="lotViewActive">
+<!-- Hourly lottery card -->
+<div class="lot-card lot-card-hour">
+<div class="lot-card-main">
+<div class="lot-card-title">Лотерея (каждый час)</div>
+<div class="lot-card-sub" id="lotteryCountdown">—</div>
+<button class="lot-card-btn" id="lotteryJoinBtn" type="button">
+          Участвовать за <span id="lotteryTicketPriceInline">—</span> ⭐
+        </button>
+</div>
+<div class="lot-card-art">🎁</div>
+<div class="lot-card-footer">
+<span class="lot-muted">Пот:</span> <span id="lotteryPot">—</span>
+</div>
+</div>
+<!-- 10-min lottery card -->
+<div class="lot-card lot-card-10">
+<div class="lot-card-main">
+<div class="lot-card-title">Лотерея (каждые 10 минут)</div>
+<div class="lot-card-sub" id="lottery10Countdown">—</div>
+<button class="lot-card-btn" id="lottery10JoinBtn" type="button">
+          Участвовать за <span id="lottery10TicketPriceInline">—</span> ⭐
+        </button>
+</div>
+<div class="lot-card-art">⏱️</div>
+<div class="lot-card-footer">
+<span class="lot-muted">Пот:</span> <span id="lottery10Pot">—</span>
+</div>
+</div>
+</div>
+<div class="lot-history" id="lotteryHistoryPanel" style="display:none;">
+<div class="lot-history-title">История лотерей</div>
+<div class="lot-history-body" id="lotteryHistoryBody">Загрузка…</div>
+</div>
+<div class="lot-error" id="lotteryErr" style="display:none;"></div>
+</div>
+</div>
+</div>
+<div class="bottom-nav">
+<div class="nav active" id="tabSpin"><div class="nav-icon">🎰</div><div class="nav-label">Рулетка</div></div>
+<div class="nav" id="tabLottery"><div class="nav-icon">🎟️</div><div class="nav-label">Лотерея</div></div>
+<div class="nav" id="tabInv"><div class="nav-icon">🎒</div><div class="nav-label">Инвентарь</div></div>
+<div class="nav" id="tabTop"><div class="nav-icon">🏆</div><div class="nav-label">Топ</div></div>
+</div>
+<!-- Claim UI -->
+<div id="claimBackdrop"></div>
+<div id="claimSheet">
+<div class="claim-head">
+<div class="claim-title">🎉 Ваш приз</div>
+<div class="claim-close" id="claimClose">✕</div>
+</div>
+<div class="claim-row">
+<img alt="prize" id="claimImg" src=""/>
+<div style="display:flex; flex-direction:column; gap:4px;">
+<div class="claim-name" id="claimName">—</div>
+<div class="claim-meta" id="claimMeta">—</div>
+</div>
+</div>
+<div class="claim-actions">
+<button class="btn btn-sell" id="btnSell">Продать</button>
+<button class="btn btn-keep" id="btnKeep">Забрать</button>
+</div>
+<div class="claim-hint">Выберите действие: продать за ⭐ или добавить в инвентарь.</div>
+</div>
+<!-- Topup UI -->
+<div id="topupBackdrop"></div>
+<div id="topupSheet">
+<div class="claim-head" style="margin-bottom:6px;">
+<div class="topup-title">⭐ Пополнение</div>
+<div class="claim-close" id="topupClose">✕</div>
+</div>
+<div class="topup-grid">
+<div class="topup-pack" data-stars="50">50 ⭐<small>быстро</small></div>
+<div class="topup-pack" data-stars="100">100 ⭐<small>оптимально</small></div>
+<div class="topup-pack" data-stars="250">250 ⭐<small>выгодно</small></div>
+</div>
+<div class="topup-footer">
+<button class="btn topup-cancel" id="topupCancel">Отмена</button>
+<button class="btn topup-buy" disabled="" id="topupBuy">Пополнить</button>
+</div>
+<div class="topup-note">Оплата откроется в Telegram. Баланс обновится после успешного платежа.</div>
+</div>
+<script>
     const API_BASE = "https://test-u2mr.onrender.com"; // <-- поменяй на свой бекенд при необходимости
 
     const tg = window.Telegram?.WebApp;
@@ -662,6 +871,66 @@ window.addEventListener('error', (ev) => {
     const lottery10BuyQty = document.getElementById('lottery10BuyQty');
     const lottery10BuyHint = document.getElementById('lottery10BuyHint');
     const lottery10Last = document.getElementById('lottery10Last');
+
+    // Lottery UI (segmented + quick-join + history)
+    const lotSegActive = document.getElementById('lotSegActive');
+    const lotSegMine = document.getElementById('lotSegMine');
+    const lotViewActive = document.getElementById('lotViewActive');
+    const lotViewMine = document.getElementById('lotViewMine');
+    const lotteryJoinBtn = document.getElementById('lotteryJoinBtn');
+    const lottery10JoinBtn = document.getElementById('lottery10JoinBtn');
+    const lotteryHistoryOpen = document.getElementById('lotteryHistoryOpen');
+    const lotteryHistoryPanel = document.getElementById('lotteryHistoryPanel');
+    const lotteryHistoryBody = document.getElementById('lotteryHistoryBody');
+    const lotteryDayPill = document.getElementById('lotteryDayPill');
+    // Date pill like "В этот день — 21 декабря"
+    if (lotteryDayPill) {
+      const dt = new Date();
+      const m = dt.toLocaleString('ru-RU', { month: 'long' });
+      lotteryDayPill.textContent = `В этот день — ${dt.getDate()} ${m} 💡`;
+    }
+
+    if (lotteryJoinBtn) lotteryJoinBtn.addEventListener('click', () => buyLotteryTickets(1));
+    if (lottery10JoinBtn) lottery10JoinBtn.addEventListener('click', () => buyLottery10Tickets(1));
+
+    if (lotteryHistoryOpen) lotteryHistoryOpen.addEventListener('click', async () => {
+      if (!lotteryHistoryPanel || !lotteryHistoryBody) return;
+      const shown = lotteryHistoryPanel.style.display !== 'none';
+      lotteryHistoryPanel.style.display = shown ? 'none' : 'block';
+      if (shown) return;
+
+      // try load history for both lotteries (ignore if endpoint absent)
+      lotteryHistoryBody.textContent = 'Загрузка…';
+      let parts = [];
+      try {
+        const h1 = await apiPost('/lottery/history', { initData: tg?.initData || '' });
+        if (h1?.items?.length) {
+          const lines = h1.items.slice(0, 10).map(x => {
+            const dt = new Date((Number(x.hour_start || 0) || 0) * 1000);
+            const when = dt.toLocaleString();
+            const w = x.winner_name || (x.winner_user_id ? ('User ' + String(x.winner_user_id).slice(-4)) : '—');
+            return `• ${when} — ${w} — ⭐ ${x.prize_amount || 0}`;
+          });
+          parts.push('Часовая:\n' + lines.join('\n'));
+        }
+      } catch (e) {}
+
+      try {
+        const h2 = await apiPost('/lottery10/history', { initData: tg?.initData || '' });
+        if (h2?.items?.length) {
+          const lines = h2.items.slice(0, 10).map(x => {
+            const dt = new Date((Number(x.period_start || 0) || 0) * 1000);
+            const when = dt.toLocaleString();
+            const w = x.winner_name || (x.winner_user_id ? ('User ' + String(x.winner_user_id).slice(-4)) : '—');
+            return `• ${when} — ${w} — ⭐ ${x.prize_amount || 0}`;
+          });
+          parts.push('Каждые 10 минут:\n' + lines.join('\n'));
+        }
+      } catch (e) {}
+
+      lotteryHistoryBody.textContent = parts.length ? parts.join('\n\n') : 'История пока недоступна.';
+    });
+
 
     // Lottery globals (must be defined in global scope)
     let lotteryRefreshInterval = null;
@@ -768,7 +1037,7 @@ window.addEventListener('error', (ev) => {
         const caseInfo = res?.case || selectedCase;
         if (caseHint){
           const desc = (caseInfo && caseInfo.description) ? String(caseInfo.description) : '';
-          caseHint.textContent = desc ? desc : `Выбран кейс: ${(caseInfo?.name || '')} • ${caseInfo?.price ?? ''} ⭐`;
+          caseHint.textContent = '';
         }
         // update button label
         if (btn && caseInfo && typeof caseInfo.price === 'number'){
@@ -1153,19 +1422,22 @@ function fmtHHMMSS(sec) {
         const prize80 = Math.floor(totalSpent * 0.80);
 
         if (lotteryPot) lotteryPot.textContent = `⭐ ${totalSpent}`;
-        if (lotteryPrize) lotteryPrize.textContent = `Победителю: ⭐ ${prize80} (80%) • Комиссия: 20%`;
+        if (lotteryPrize) { lotteryPrize.textContent = ''; lotteryPrize.style.display = 'none'; }
 
         const myTickets = Number(lot.my_tickets || 0);
         const mySpent = Number(lot.my_spent || (myTickets * (lotteryTicketPrice || 0)) || 0);
         if (lotteryMy) lotteryMy.textContent = `${myTickets} шт. • ⭐ ${mySpent}`;
         if (lotteryTicketPriceEl) lotteryTicketPriceEl.textContent = `Цена билета: ⭐ ${lotteryTicketPrice || '—'} • Всего билетов: ${totalTickets}`;
 
+        const lotteryTicketPriceInline = document.getElementById('lotteryTicketPriceInline');
+        if (lotteryTicketPriceInline) lotteryTicketPriceInline.textContent = (lotteryTicketPrice ?? '—');
+
         const now = Math.floor(Date.now() / 1000);
         const left = Math.max(0, (lotteryEndsAt || 0) - now);
         if (lotteryCountdown) lotteryCountdown.textContent = `До розыгрыша: ${fmtHHMMSS(left)}`;
 
         if (lotteryBuyHint) {
-          lotteryBuyHint.textContent = `Купи билеты сейчас — розыгрыш в конце часа. Победитель получает 80% пота, 20% — комиссия бота.`;
+          lotteryBuyHint.textContent = `Купи билеты сейчас — розыгрыш в конце часа.`;
         }
 
         const last = res?.last;
@@ -1174,7 +1446,7 @@ function fmtHHMMSS(sec) {
             const dt = new Date((Number(last.hour_start) || 0) * 1000);
             const when = dt.toLocaleString();
             const wname = last.winner_name || (last.winner_user_id ? ('User ' + String(last.winner_user_id).slice(-4)) : '—');
-            lotteryLast.textContent = `${when} • Победитель: ${wname} • Приз: ⭐ ${last.prize_amount || 0} • Пот: ⭐ ${last.total_spent || 0}`;
+            lotteryLast.textContent = `${when} • Победитель: ${wname} • Пот: ⭐ ${last.total_spent || 0}`;
           } else {
             lotteryLast.textContent = '—';
           }
@@ -1219,18 +1491,21 @@ function fmtHHMMSS(sec) {
         const prize80 = Math.floor(totalSpent * 0.80);
 
         if (lottery10Pot) lottery10Pot.textContent = `⭐ ${totalSpent}`;
-        if (lottery10Prize) lottery10Prize.textContent = `Победителю: ⭐ ${prize80} (80%) • Комиссия: 20%`;
+        if (lottery10Prize) { lottery10Prize.textContent = ''; lottery10Prize.style.display = 'none'; }
 
         const myTickets = Number(lot.my_tickets || 0);
         if (lottery10My) lottery10My.textContent = `${myTickets} шт.`;
         if (lottery10TicketPriceEl) lottery10TicketPriceEl.textContent = `Цена билета: ⭐ ${lottery10TicketPrice || '—'} • Всего билетов: ${totalTickets}`;
+
+        const lottery10TicketPriceInline = document.getElementById('lottery10TicketPriceInline');
+        if (lottery10TicketPriceInline) lottery10TicketPriceInline.textContent = (lottery10TicketPrice ?? '—');
 
         const now = Math.floor(Date.now() / 1000);
         const left = Math.max(0, (lottery10EndsAt || 0) - now);
         if (lottery10Countdown) lottery10Countdown.textContent = `До розыгрыша: ${fmtHHMMSS(left)}`;
 
         if (lottery10BuyHint) {
-          lottery10BuyHint.textContent = `Каждые 10 минут выбирается случайный билет. Победитель получает 80% пота, 20% — комиссия бота.`;
+          lottery10BuyHint.textContent = `Каждые 10 минут выбирается случайный билет.`;
         }
 
         const last = res?.last;
@@ -1239,7 +1514,7 @@ function fmtHHMMSS(sec) {
             const dt = new Date((Number(last.period_start) || 0) * 1000);
             const when = dt.toLocaleString();
             const wname = last.winner_name || (last.winner_user_id ? ('User ' + String(last.winner_user_id).slice(-4)) : '—');
-            lottery10Last.textContent = `${when} • Победитель: ${wname} • Приз: ⭐ ${last.prize_amount || 0} • Пот: ⭐ ${last.total_spent || 0}`;
+            lottery10Last.textContent = `${when} • Победитель: ${wname} • Пот: ⭐ ${last.total_spent || 0}`;
           } else {
             lottery10Last.textContent = '—';
           }
@@ -1282,19 +1557,27 @@ function fmtHHMMSS(sec) {
         const items = Array.isArray(res.items) ? res.items : [];
         const me = res.me || {};
 
-        topMe.textContent = `Ваше место: #${me.rank ?? '—'} • Баланс: ⭐ ${me.balance ?? '—'}`;
+        const meBalance = (me.balance ?? '—');
+        const meSpins = (me.spins ?? me.spins_count ?? me.total_spins ?? 0);
+        const meWon = (me.won_stars ?? me.wonStars ?? me.stars_won ?? me.won ?? 0);
+
+        topMe.textContent = `Ваше место: #${me.rank ?? '—'} • Баланс: ⭐ ${meBalance} • Спины: ${meSpins} • Выиграно: ⭐ ${meWon}`;
 
         topList.innerHTML = items.map(it => {
           const badge = it.is_me ? ' style="box-shadow: inset 0 0 0 2px rgba(74,163,255,0.55)"' : '';
           const av = it.avatar
             ? `<img class="lb-avatar" src="${it.avatar}" alt="avatar" referrerpolicy="no-referrer" />`
             : `<div class="lb-avatar lb-avatar--ph">${initialsFromName(it.name)}</div>`;
+
+          const spins = (it.spins ?? it.spins_count ?? it.total_spins ?? 0);
+          const won = (it.won_stars ?? it.wonStars ?? it.stars_won ?? it.won ?? 0);
+
           return `
             <div class="inv-card"${badge}>
               ${av}
               <div class="inv-meta" style="width:100%;">
                 <div class="inv-name">#${it.rank} • ${it.name}</div>
-                <div class="inv-sub">⭐ ${it.balance}</div>
+                <div class="inv-sub">Баланс: ⭐ ${it.balance} • Спины: ${spins} • Выиграно: ⭐ ${won}</div>
               </div>
             </div>
           `;
