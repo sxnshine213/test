@@ -45,6 +45,22 @@
     </div>
   </div>
 
+
+  <div class="card">
+    <div class="row" style="justify-content:space-between;">
+      <div style="font-weight:900;">🎟️ Лотерея • Иконка сверху</div>
+      <div id="uiStatus" class="muted"></div>
+    </div>
+    <div class="row" style="margin-top:10px;">
+      <input id="lotteryBadgeUrl" placeholder="Lottery badge URL (webp/webm/png) — вставь ссылку" style="min-width:360px;flex:3"/>
+      <button class="secondary" id="loadUi">Загрузить</button>
+      <button id="saveUi">Сохранить</button>
+    </div>
+    <div class="muted" style="margin-top:8px;">
+      Этот URL используется в верхней иконке на вкладке «Лотерея». Поддерживаются <span class="pill">.webp</span> и <span class="pill">.webm</span>.
+    </div>
+  </div>
+
   <div class="card">
     <div class="row" style="justify-content:space-between;">
       <div style="font-weight:900;">📊 Статистика</div>
@@ -174,6 +190,13 @@
   const statsBox = document.getElementById('statsBox');
   const statsStatus = document.getElementById('statsStatus');
 
+  // ===== UI settings (Lottery badge) =====
+  const uiStatus = document.getElementById('uiStatus');
+  const lotteryBadgeUrlEl = document.getElementById('lotteryBadgeUrl');
+  const loadUiBtn = document.getElementById('loadUi');
+  const saveUiBtn = document.getElementById('saveUi');
+
+
   const userIdEl = document.getElementById('userId');
   const deltaEl = document.getElementById('delta');
   const userStatus = document.getElementById('userStatus');
@@ -218,6 +241,34 @@
   function saveCfg() {
     localStorage.setItem('admin_api_base', apiBaseEl.value.trim());
     localStorage.setItem('admin_key', adminKeyEl.value.trim());
+  }
+
+
+  async function loadUiSettings() {
+    if (!uiStatus) return;
+    uiStatus.textContent = 'загрузка...';
+    try {
+      const s = await api('/admin/settings');
+      if (lotteryBadgeUrlEl) lotteryBadgeUrlEl.value = (s.lottery_badge_url || '').trim();
+      uiStatus.innerHTML = `<span class="ok">OK</span> • загружено`;
+    } catch (e) {
+      uiStatus.innerHTML = `<span class="bad">ERR</span> • ${e.message}`;
+    }
+  }
+
+  async function saveUiSettings() {
+    if (!uiStatus) return;
+    uiStatus.textContent = 'сохранение...';
+    try {
+      const body = {
+        lottery_badge_url: (lotteryBadgeUrlEl?.value || '').trim() || null,
+      };
+      const s = await api('/admin/settings', { method:'PUT', body: JSON.stringify(body) });
+      if (lotteryBadgeUrlEl) lotteryBadgeUrlEl.value = (s.lottery_badge_url || '').trim();
+      uiStatus.innerHTML = `<span class="ok">OK</span> • сохранено`;
+    } catch (e) {
+      uiStatus.innerHTML = `<span class="bad">ERR</span> • ${e.message}`;
+    }
   }
 
   function fmtTime(ts) {
@@ -796,9 +847,13 @@ async function loadTopups() {
   document.getElementById('applyDelta').onclick = applyDelta;
   document.getElementById('loadTopups').onclick = loadTopups;
 
+  loadUiBtn && (loadUiBtn.onclick = loadUiSettings);
+  saveUiBtn && (saveUiBtn.onclick = saveUiSettings);
+
   loadCfg();
   loadStats();
   loadTopups();
+  loadUiSettings();
 
   document.getElementById('loadPrizes')?.addEventListener('click', loadPrizes);
   document.getElementById('createPrize')?.addEventListener('click', createPrize);
