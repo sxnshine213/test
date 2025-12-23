@@ -152,12 +152,6 @@ class AdminAdjustReq(BaseModel):
     delta: int
 
 
-
-class AdminSettingsIn(BaseModel):
-    # UI: Lottery tab badge media (webp/webm/png)
-    lottery_badge_url: Optional[str] = None
-
-
 class PrizeIn(BaseModel):
     name: str
     icon_url: Optional[str] = None
@@ -464,25 +458,6 @@ def init_db():
                             ),
                         )
 
-
-                # app settings (key-value for UI/config)
-                cur.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS app_settings (
-                      key TEXT PRIMARY KEY,
-                      value TEXT,
-                      updated_at BIGINT NOT NULL
-                    )
-                    """
-                )
-                # seed known settings keys
-                now = int(time.time())
-                cur.execute(
-                    "INSERT INTO app_settings (key, value, updated_at) VALUES (%s,%s,%s) "
-                    "ON CONFLICT (key) DO NOTHING",
-                    ("lottery_badge_url", None, now),
-                )
-
                 # seed default case and bind all existing prizes if cases are empty
                 cur.execute("SELECT COUNT(*) FROM cases")
                 cases_cnt = int(cur.fetchone()[0] or 0)
@@ -512,31 +487,6 @@ def require_admin(request: Request):
     got = request.headers.get("X-Admin-Key", "")
     if not got or not hmac.compare_digest(got, ADMIN_KEY):
         raise HTTPException(status_code=401, detail="admin unauthorized")
-
-
-
-# ===== App settings helpers =====
-def get_setting(cur, key: str, default=None):
-    cur.execute("SELECT value FROM app_settings WHERE key=%s", (key,))
-    row = cur.fetchone()
-    if not row:
-        return default
-    val = row[0]
-    return val if val is not None else default
-
-
-def set_setting(cur, key: str, value: Optional[str]):
-    now_ts = int(time.time())
-    cur.execute(
-        "INSERT INTO app_settings (key, value, updated_at) VALUES (%s,%s,%s) "
-        "ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=EXCLUDED.updated_at",
-        (key, value, now_ts),
-    )
-
-
-def load_ui_settings(cur) -> dict:
-    url = (get_setting(cur, "lottery_badge_url", None) or "").strip() or None
-    return {"lottery_badge_url": url}
 
 
 # ===== Telegram initData verify (WebApp) =====
@@ -1003,8 +953,7 @@ def me(req: MeReq):
         with con:
             with con.cursor() as cur:
                 bal = get_or_create_user(cur, uid, public)
-                ui = load_ui_settings(cur)
-    return {"tg_user_id": uid, "balance": int(bal), "ui": ui}
+    return {"tg_user_id": uid, "balance": int(bal)}
 
 
 
@@ -1590,11 +1539,8 @@ def lottery_status(req: LotteryStatusReq):
                         "total_spent": int(last[3] or 0),
                     }
 
-                ui = load_ui_settings(cur)
-
     return {
         "balance": int(bal),
-        "ui": ui,
         "lottery": {
             "hour_start": int(r[0]),
             "hour_end": int(r[1]),
@@ -1800,11 +1746,8 @@ def lottery10_status(req: LotteryStatusReq):
                         "total_spent": int(last[3] or 0),
                     }
 
-                ui = load_ui_settings(cur)
-
     return {
         "balance": int(bal),
-        "ui": ui,
         "lottery": {
             "period_sec": int(LOTTERY10_PERIOD_SEC),
             "period_start": int(r[0]),
@@ -1955,31 +1898,6 @@ def lottery10_history(req: LotteryHistoryReq):
 
 
 
-
-@app.get("/admin/settings")
-def admin_get_settings(request: Request):
-    require_admin(request)
-    with pool.connection() as con:
-        with con:
-            with con.cursor() as cur:
-                ui = load_ui_settings(cur)
-    return ui
-
-
-@app.put("/admin/settings")
-def admin_update_settings(body: AdminSettingsIn, request: Request):
-    require_admin(request)
-    with pool.connection() as con:
-        with con:
-            with con.cursor() as cur:
-                val = body.lottery_badge_url
-                if val is not None:
-                    v = str(val).strip()
-                    set_setting(cur, "lottery_badge_url", (v or None))
-                ui = load_ui_settings(cur)
-    return ui
-
-
 @app.get("/admin/stats")
 def admin_stats(request: Request):
     require_admin(request)
@@ -2014,6 +1932,10 @@ def admin_stats(request: Request):
                     "SELECT COALESCE(SUM(stars_amount),0) FROM topups WHERE status='paid' AND paid_at >= %s",
                     (day_ago,),
                 )
+
+                # Fetch immediately; subsequent queries overwrite the cursor.
+                row = cur.fetchone()
+                paid_stars_24h = int((row[0] if row and row[0] is not None else 0) or 0)
 
 
                 # lottery stats
@@ -2050,7 +1972,7 @@ def admin_stats(request: Request):
                     lottery10_pot_current = 0
                     lottery10_tickets_current = 0
 
-                paid_stars_24h = int(cur.fetchone()[0])
+                # (paid_stars_24h already computed above)
 
     return {
         "users": users,
