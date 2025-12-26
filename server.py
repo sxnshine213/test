@@ -316,6 +316,76 @@ def init_db():
                     """
                 )
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_promo_codes_active ON promo_codes(is_active)")
+
+                # ensure promo_codes schema (older DBs may have a promo_codes table without these columns)
+                cur.execute("ALTER TABLE promo_codes ADD COLUMN IF NOT EXISTS bonus_percent INTEGER NOT NULL DEFAULT 0")
+                cur.execute("ALTER TABLE promo_codes ADD COLUMN IF NOT EXISTS bonus_flat INTEGER NOT NULL DEFAULT 0")
+                cur.execute("ALTER TABLE promo_codes ADD COLUMN IF NOT EXISTS max_uses INTEGER")
+                cur.execute("ALTER TABLE promo_codes ADD COLUMN IF NOT EXISTS used_count INTEGER NOT NULL DEFAULT 0")
+                cur.execute("ALTER TABLE promo_codes ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE")
+                cur.execute("ALTER TABLE promo_codes ADD COLUMN IF NOT EXISTS valid_from BIGINT")
+                cur.execute("ALTER TABLE promo_codes ADD COLUMN IF NOT EXISTS valid_to BIGINT")
+                cur.execute("ALTER TABLE promo_codes ADD COLUMN IF NOT EXISTS created_at BIGINT")
+                cur.execute(
+                    """
+                    DO $$
+                    BEGIN
+                      IF EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_schema = 'public' AND table_name = 'promo_codes' AND column_name = 'created_at'
+                          AND data_type IN ('bigint', 'integer')
+                      ) THEN
+                        UPDATE promo_codes
+                        SET created_at = EXTRACT(EPOCH FROM NOW())::BIGINT
+                        WHERE created_at IS NULL;
+                      END IF;
+                    END $$;
+                    """
+                )
+
+                # best-effort migration from older column names (if they exist)
+                cur.execute(
+                    """
+                    DO $$
+                    BEGIN
+                      IF EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_schema = 'public' AND table_name = 'promo_codes' AND column_name = 'bonus'
+                      ) THEN
+                        UPDATE promo_codes
+                        SET bonus_percent = bonus
+                        WHERE (bonus_percent IS NULL OR bonus_percent = 0) AND bonus IS NOT NULL;
+                      END IF;
+
+                      IF EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_schema = 'public' AND table_name = 'promo_codes' AND column_name = 'bonus_pct'
+                      ) THEN
+                        UPDATE promo_codes
+                        SET bonus_percent = bonus_pct
+                        WHERE (bonus_percent IS NULL OR bonus_percent = 0) AND bonus_pct IS NOT NULL;
+                      END IF;
+
+                      IF EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_schema = 'public' AND table_name = 'promo_codes' AND column_name = 'bonus_amount'
+                      ) THEN
+                        UPDATE promo_codes
+                        SET bonus_flat = bonus_amount
+                        WHERE (bonus_flat IS NULL OR bonus_flat = 0) AND bonus_amount IS NOT NULL;
+                      END IF;
+
+                      IF EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_schema = 'public' AND table_name = 'promo_codes' AND column_name = 'bonus_stars'
+                      ) THEN
+                        UPDATE promo_codes
+                        SET bonus_flat = bonus_stars
+                        WHERE (bonus_flat IS NULL OR bonus_flat = 0) AND bonus_stars IS NOT NULL;
+                      END IF;
+                    END $$;
+                    """
+                )
                 cur.execute(
                     """
                     CREATE TABLE IF NOT EXISTS promo_redemptions (
