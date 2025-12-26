@@ -33,7 +33,58 @@
       font-weight: 700;
       font-size: 16px;
     }
-    .tabs { display: flex; gap: 10px; }
+    
+
+.brand{
+  display:flex;
+  align-items:center;
+  gap: 10px;
+  min-width: 0;
+}
+.brand__name{
+  font-weight: 900;
+  letter-spacing: 0.2px;
+  white-space: nowrap;
+}
+.online-badge{
+  display:flex;
+  align-items:center;
+  gap: 6px;
+  background: rgba(22,34,53,0.85);
+  border: 1px solid rgba(255,255,255,0.10);
+  border-radius: 999px;
+  padding: 4px 8px;
+  font-weight: 900;
+  font-size: 12px;
+  line-height: 1;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+}
+.online-dot{
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #3bff82;
+  box-shadow: 0 0 0 4px rgba(59,255,130,0.12), 0 0 18px rgba(59,255,130,0.25);
+  position: relative;
+}
+.online-dot::after{
+  content:"";
+  position:absolute;
+  inset:-6px;
+  border-radius:999px;
+  border: 1px solid rgba(59,255,130,0.30);
+  opacity: 0.0;
+  transform: scale(0.6);
+  animation: onlinePulse 1.6s ease-out infinite;
+}
+@keyframes onlinePulse{
+  0% { opacity: 0.55; transform: scale(0.6); }
+  70%{ opacity: 0.0; transform: scale(1.35); }
+  100%{ opacity: 0.0; transform: scale(1.35); }
+}
+.online-num{ font-variant-numeric: tabular-nums; }
+
+.tabs { display: flex; gap: 10px; }
     .pill {
       flex: 1;
       background: #162235;
@@ -161,20 +212,10 @@
       overflow: hidden;
       transition: transform 180ms ease, box-shadow 180ms ease;
       will-change: transform;
-
-      /* default highlight (rare) */
-      --win-rgb: 74,163,255;
     }
-
-    /* Rarity -> highlight color */
-    .item[data-rarity="common"] { --win-rgb: 190,190,190; }
-    .item[data-rarity="uncommon"] { --win-rgb: 78,219,114; }
-    .item[data-rarity="rare"] { --win-rgb: 74,163,255; }
-    .item[data-rarity="epic"] { --win-rgb: 182,105,255; }
-    .item[data-rarity="legendary"] { --win-rgb: 255,176,61; }
     .item.win {
       transform: translateY(-2px) scale(1.03);
-      box-shadow: 0 0 0 2px rgba(var(--win-rgb),0.45), 0 0 12px rgba(var(--win-rgb),0.28);
+      box-shadow: 0 0 0 2px rgba(74,163,255,0.45), 0 0 12px rgba(74,163,255,0.28);
     }
     .item.win::after{
       content:"";
@@ -184,8 +225,8 @@
       /* all the "nice" highlight is INSIDE the card (so it won't be clipped) */
       box-shadow:
         inset 0 0 0 1px rgba(255,255,255,0.06),
-        inset 0 0 0 2px rgba(var(--win-rgb),0.55);
-      background: radial-gradient(circle at 50% 0%, rgba(var(--win-rgb),0.22), rgba(var(--win-rgb),0.06) 46%, rgba(0,0,0,0) 72%);
+        inset 0 0 0 2px rgba(74,163,255,0.55);
+      background: radial-gradient(circle at 50% 0%, rgba(74,163,255,0.22), rgba(74,163,255,0.06) 46%, rgba(0,0,0,0) 72%);
       pointer-events:none;
     }
     .item img { width: 70px; height: 70px; }
@@ -691,7 +732,7 @@
 <body>
 <div class="app">
 <div class="header">
-<div>archicasino</div>
+<div class="brand"><div class="brand__name">archicasino</div><div class="online-badge" title="Сейчас онлайн"><span class="online-dot" aria-hidden="true"></span><span class="online-num" id="onlineCount">—</span></div></div>
 <div style="display:flex; gap:8px; align-items:center;">
 <div id="balanceBadge" style="font-weight:800;font-size:13px;background:#162235;padding:6px 10px;border-radius:999px;">⭐ …</div>
 <div id="topupBtn" style="font-weight:900;font-size:13px;background:#5b8ecb;padding:6px 10px;border-radius:999px;cursor:pointer;user-select:none;-webkit-user-select:none;">
@@ -882,7 +923,74 @@ window.addEventListener('error', (ev) => {
     const roulette = document.getElementById('roulette');
     const balanceBadge = document.getElementById('balanceBadge');
 
-    const topupBtn = document.getElementById('topupBtn');
+    
+
+const onlineCountEl = document.getElementById('onlineCount');
+
+function getOrCreateSessionId() {
+  try {
+    const key = 'ac_online_sid_v1';
+    let sid = localStorage.getItem(key);
+    if (!sid) {
+      sid = (crypto?.randomUUID?.() || (Date.now().toString(16) + Math.random().toString(16).slice(2)));
+      localStorage.setItem(key, sid);
+    }
+    return sid;
+  } catch (_) {
+    return (Date.now().toString(16) + Math.random().toString(16).slice(2));
+  }
+}
+
+async function initOnlineIndicator() {
+  if (!onlineCountEl) return;
+
+  const sid = getOrCreateSessionId();
+  let active = 0;
+
+  // Smooth oscillation: 40..70 (+ active sessions)
+  const baseMin = 40, baseMax = 70;
+  const baseMid = (baseMin + baseMax) / 2;
+  const amp = (baseMax - baseMin) / 2;
+  const phase = Math.random() * Math.PI * 2;
+  const periodMs = 9000 + Math.random() * 7000; // 9..16s
+
+  const ping = async () => {
+    try { await apiPost('/online/ping', { session_id: sid }); } catch (_) {}
+  };
+  const refresh = async () => {
+    try {
+      const url = `${API_BASE}/online?window_sec=35`;
+      const res = await fetch(url);
+      const data = await res.json();
+      active = Math.max(0, Number(data?.active ?? 0) || 0);
+    } catch (_) {}
+  };
+
+  // kick off
+  ping(); refresh();
+  setInterval(ping, 10000);
+  setInterval(refresh, 12000);
+
+  let lastShown = null;
+  const tick = (now) => {
+    const t = (now / periodMs) * Math.PI * 2 + phase;
+    // main wave + tiny secondary wave (still clamped to 40..70)
+    let base = baseMid + amp * Math.sin(t);
+    base += 2.0 * Math.sin(t * 2.31 + 1.1);
+    if (base < baseMin) base = baseMin;
+    if (base > baseMax) base = baseMax;
+
+    const val = Math.round(base + active);
+    if (val !== lastShown) {
+      onlineCountEl.textContent = String(val);
+      lastShown = val;
+    }
+    requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+}
+
+const topupBtn = document.getElementById('topupBtn');
     const topupBackdrop = document.getElementById('topupBackdrop');
     const topupSheet = document.getElementById('topupSheet');
     const topupClose = document.getElementById('topupClose');
@@ -1273,7 +1381,6 @@ window.addEventListener('error', (ev) => {
     const item = document.createElement('div');
     item.className = 'item';
     item.dataset.id = String(p.id);
-    item.dataset.rarity = String(p.rarity || 'common');
 
     const img = document.createElement('img');
     img.src = (p.icon_url || '').trim() || giftImageById(p.id);
@@ -2077,6 +2184,7 @@ function fmtHHMMSS(sec) {
     await refreshPrizes();
     initInfiniteRoulette();
     refreshBalance();
+    initOnlineIndicator();
     refreshRecentWins();
     setInterval(refreshRecentWins, 12000);
     refreshInventory();
