@@ -157,7 +157,6 @@ class PrizeIn(BaseModel):
     icon_url: Optional[str] = None
     cost: int
     weight: int
-    rarity: Literal["common","uncommon","rare","epic","legendary"] = 'common'
     # Telegram Gift id for regular gifts (used by sendGift)
     gift_id: Optional[str] = None
     # Unique gifts are handled via admin claims (manual fulfillment)
@@ -229,7 +228,6 @@ def init_db():
                 )
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_prizes_active_sort ON prizes(is_active, sort_order, id)")
                 cur.execute("ALTER TABLE prizes ADD COLUMN IF NOT EXISTS icon_url TEXT")
-                cur.execute("ALTER TABLE prizes ADD COLUMN IF NOT EXISTS rarity TEXT NOT NULL DEFAULT 'common'")
 
                 # spins / inventory / topups
                 cur.execute(
@@ -890,19 +888,13 @@ def get_or_create_user(cur, tg_user_id: str, public: Optional[dict] = None) -> i
 
 def fetch_active_prizes(cur) -> list[dict]:
     cur.execute(
-        "SELECT id, name, icon_url, cost, weight, rarity FROM prizes "
+        "SELECT id, name, icon_url, cost, weight FROM prizes "
         "WHERE is_active = TRUE AND weight > 0 "
         "ORDER BY sort_order ASC, id ASC"
     )
     rows = cur.fetchall()
-    return [{
-        "id": int(r[0]),
-        "name": str(r[1]),
-        "icon_url": (str(r[2]).strip() if r[2] is not None else None),
-        "cost": int(r[3]),
-        "weight": int(r[4]),
-        "rarity": (str(r[5]) if r[5] is not None else "common"),
-    } for r in rows]
+    return [{"id": int(r[0]), "name": str(r[1]), "icon_url": (str(r[2]).strip() if r[2] is not None else None), "cost": int(r[3]), "weight": int(r[4])} for r in rows]
+
 
 def fetch_active_cases(cur) -> list[dict]:
     cur.execute(
@@ -924,7 +916,7 @@ def fetch_active_cases(cur) -> list[dict]:
 
 def fetch_case_prizes(cur, case_id: int) -> list[dict]:
     cur.execute(
-        "SELECT p.id, p.name, p.icon_url, p.cost, cp.weight, p.rarity "
+        "SELECT p.id, p.name, p.icon_url, p.cost, cp.weight "
         "FROM case_prizes cp "
         "JOIN prizes p ON p.id = cp.prize_id "
         "WHERE cp.case_id=%s AND cp.is_active=TRUE AND p.is_active=TRUE AND cp.weight > 0 "
@@ -935,11 +927,11 @@ def fetch_case_prizes(cur, case_id: int) -> list[dict]:
     return [{
         "id": int(r[0]),
         "name": str(r[1]),
-        "icon_url": ((r[2] or "").strip() or None),
+        "icon_url": ((r[2] or '').strip() or None),
         "cost": int(r[3]),
         "weight": int(r[4]),
-        "rarity": (str(r[5]) if r[5] is not None else "common"),
     } for r in rows]
+
 
 def get_balance(cur, uid: str) -> int:
     cur.execute("SELECT balance FROM users WHERE tg_user_id=%s", (uid,))
@@ -978,7 +970,7 @@ def prizes(req: MeReq):
                 public = extract_tg_user_public(req.initData)
                 get_or_create_user(cur, uid, public)
                 cur.execute(
-                    "SELECT id, name, cost, icon_url, rarity "
+                    "SELECT id, name, cost, icon_url "
                     "FROM prizes WHERE is_active = TRUE "
                     "ORDER BY sort_order ASC, id ASC"
                 )
@@ -993,7 +985,6 @@ def prizes(req: MeReq):
             "name": str(r[1]),
             "cost": int(r[2]),
             "icon_url": icon_url,
-            "rarity": (str(r[4]) if r[4] is not None else "common"),
         })
     return {"items": items}
 
@@ -1264,7 +1255,6 @@ def spin(req: SpinReq):
         "name": str(prize["name"]),
         "icon_url": ((prize.get("icon_url") or "").strip() or None),
         "cost": int(prize["cost"]),
-        "rarity": (str(prize.get("rarity") or "common")),
         "balance": int(new_balance),
         "case_id": int(case_id) if case_id > 0 else None,
         "case_name": case_name,
@@ -1321,6 +1311,12 @@ def claim(req: ClaimReq):
 
 @app.post("/leaderboard")
 def leaderboard(req: LeaderboardReq):
+    """
+    Leaderboard sorted by balance.
+    Additionally returns:
+      - spins: total count of spins for each user
+      - won_stars: sum of prize_cost across all spins (pending/kept/sold)
+    """
     uid = extract_tg_user_id(req.initData)
     limit = max(5, min(100, int(req.limit or 30)))
 
@@ -1330,9 +1326,29 @@ def leaderboard(req: LeaderboardReq):
                 public = extract_tg_user_public(req.initData)
                 my_balance = get_or_create_user(cur, uid, public)
 
+                # Leaderboard rows with aggregated stats
                 cur.execute(
-                    "SELECT tg_user_id, balance, username, first_name, last_name, photo_url "
-                    "FROM users ORDER BY balance DESC, created_at ASC LIMIT %s",
+                    """
+                    SELECT
+                      u.tg_user_id,
+                      u.balance,
+                      u.username,
+                      u.first_name,
+                      u.last_name,
+                      u.photo_url,
+                      COALESCE(s.spins, 0) AS spins,
+                      COALESCE(s.won_stars, 0) AS won_stars
+                    FROM users u
+                    LEFT JOIN (
+                      SELECT tg_user_id,
+                             COUNT(*)::INT AS spins,
+                             COALESCE(SUM(prize_cost), 0)::INT AS won_stars
+                      FROM spins
+                      GROUP BY tg_user_id
+                    ) s ON s.tg_user_id = u.tg_user_id
+                    ORDER BY u.balance DESC, u.created_at ASC
+                    LIMIT %s
+                    """,
                     (limit,),
                 )
                 rows = cur.fetchall()
@@ -1346,6 +1362,14 @@ def leaderboard(req: LeaderboardReq):
                 )
                 mine = cur.fetchone()
 
+                cur.execute(
+                    "SELECT COUNT(*)::INT, COALESCE(SUM(prize_cost),0)::INT FROM spins WHERE tg_user_id=%s",
+                    (uid,),
+                )
+                my_stats = cur.fetchone() or (0, 0)
+                my_spins = int(my_stats[0] or 0)
+                my_won = int(my_stats[1] or 0)
+
     items = []
     for i, r in enumerate(rows, start=1):
         tg_user_id = str(r[0])
@@ -1357,12 +1381,16 @@ def leaderboard(req: LeaderboardReq):
             "name": name,
             "avatar": avatar,
             "balance": int(r[1]),
+            "spins": int(r[6] or 0),
+            "won_stars": int(r[7] or 0),
             "is_me": tg_user_id == str(uid),
         })
 
     me_obj = {
         "rank": my_rank,
         "balance": int(my_balance),
+        "spins": my_spins,
+        "won_stars": my_won,
         "name": display_name(mine[0], mine[1], mine[2], str(uid)) if mine else mask_uid(str(uid)),
         "avatar": ((mine[3] or "").strip() if mine else "") or None,
     }
@@ -2130,7 +2158,7 @@ def admin_list_prizes(request: Request):
         with con:
             with con.cursor() as cur:
                 cur.execute(
-                    "SELECT id, name, icon_url, cost, weight, rarity, gift_id, is_unique, is_active, sort_order, created_at "
+                    "SELECT id, name, icon_url, cost, weight, gift_id, is_unique, is_active, sort_order, created_at "
                     "FROM prizes ORDER BY sort_order ASC, id ASC"
                 )
                 rows = cur.fetchall()
@@ -2142,12 +2170,11 @@ def admin_list_prizes(request: Request):
             "icon_url": ((r[2] or "").strip() or None),
             "cost": int(r[3]),
             "weight": int(r[4]),
-            "rarity": (str(r[5]) if r[5] is not None else "common"),
-            "gift_id": (str(r[6]) if r[6] is not None and str(r[6]).strip() else None),
-            "is_unique": bool(r[7]),
-            "is_active": bool(r[8]),
-            "sort_order": int(r[9]),
-            "created_at": int(r[10]),
+            "gift_id": (str(r[5]) if r[5] is not None and str(r[5]).strip() else None),
+            "is_unique": bool(r[6]),
+            "is_active": bool(r[7]),
+            "sort_order": int(r[8]),
+            "created_at": int(r[9]),
         })
     return {"items": items}
 
@@ -2164,15 +2191,14 @@ def admin_create_prize(request: Request, req: PrizeIn):
                 new_id = int(cur.fetchone()[0])
 
                 cur.execute(
-                    "INSERT INTO prizes (id, name, icon_url, cost, weight, rarity, gift_id, is_unique, is_active, sort_order, created_at) "
-                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                    "INSERT INTO prizes (id, name, icon_url, cost, weight, gift_id, is_unique, is_active, sort_order, created_at) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                     (
                         new_id,
                         req.name,
                         (req.icon_url or None),
                         int(req.cost),
                         int(req.weight),
-                        str(req.rarity or 'common'),
                         (req.gift_id or None),
                         bool(req.is_unique),
                         bool(req.is_active),
@@ -2190,7 +2216,7 @@ def admin_update_prize(request: Request, prize_id: int, req: PrizeIn):
         with con:
             with con.cursor() as cur:
                 cur.execute(
-                    "UPDATE prizes SET name=%s, icon_url=%s, cost=%s, weight=%s, rarity=%s, gift_id=%s, is_unique=%s, "
+                    "UPDATE prizes SET name=%s, icon_url=%s, cost=%s, weight=%s, gift_id=%s, is_unique=%s, "
                     "is_active=%s, sort_order=%s "
                     "WHERE id=%s RETURNING created_at",
                     (
@@ -2198,7 +2224,6 @@ def admin_update_prize(request: Request, prize_id: int, req: PrizeIn):
                         (req.icon_url or None),
                         int(req.cost),
                         int(req.weight),
-                        str(req.rarity or 'common'),
                         (req.gift_id or None),
                         bool(req.is_unique),
                         bool(req.is_active),
