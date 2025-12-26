@@ -33,7 +33,58 @@
       font-weight: 700;
       font-size: 16px;
     }
-    .tabs { display: flex; gap: 10px; }
+    
+
+.brand{
+  display:flex;
+  align-items:center;
+  gap: 10px;
+  min-width: 0;
+}
+.brand__name{
+  font-weight: 900;
+  letter-spacing: 0.2px;
+  white-space: nowrap;
+}
+.online-badge{
+  display:flex;
+  align-items:center;
+  gap: 6px;
+  background: rgba(22,34,53,0.85);
+  border: 1px solid rgba(255,255,255,0.10);
+  border-radius: 999px;
+  padding: 4px 8px;
+  font-weight: 900;
+  font-size: 12px;
+  line-height: 1;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+}
+.online-dot{
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #3bff82;
+  box-shadow: 0 0 0 4px rgba(59,255,130,0.12), 0 0 18px rgba(59,255,130,0.25);
+  position: relative;
+}
+.online-dot::after{
+  content:"";
+  position:absolute;
+  inset:-6px;
+  border-radius:999px;
+  border: 1px solid rgba(59,255,130,0.30);
+  opacity: 0.0;
+  transform: scale(0.6);
+  animation: onlinePulse 1.6s ease-out infinite;
+}
+@keyframes onlinePulse{
+  0% { opacity: 0.55; transform: scale(0.6); }
+  70%{ opacity: 0.0; transform: scale(1.35); }
+  100%{ opacity: 0.0; transform: scale(1.35); }
+}
+.online-num{ font-variant-numeric: tabular-nums; }
+
+.tabs { display: flex; gap: 10px; }
     .pill {
       flex: 1;
       background: #162235;
@@ -127,14 +178,18 @@
       background: radial-gradient(circle at center, #18263c, #0f1a2b);
       border-radius: 22px;
       /* slightly bigger roulette block */
-      padding: 20px 0 14px;
+      padding: 12px 0 8px;
     }
     .roulette {
+      /* Centering bias can be used if some devices still look ~1-2px off */
+      --center-bias: 0px;
+
       display: flex;
       flex-direction: row;
       flex-wrap: nowrap;
       gap: 16px;
-      padding: 0 16px;
+      /* Add vertical padding so glow/outline is NOT clipped by overflow */
+      padding: 6px 16px;
       align-items: center;
       overflow-x: scroll;
       overflow-y: hidden;
@@ -147,33 +202,91 @@
     .roulette::-webkit-scrollbar { display: none; }
     .item {
       /* slightly bigger gift cards */
-      flex: 0 0 110px;
-      width: 110px;
+      position: relative;
+      flex: 0 0 140px;
+      width: 140px;
       background: linear-gradient(180deg, #1b2a40, #0f1a2b);
-      border-radius: 16px;
-      padding: 14px;
+      border-radius: 18px;
+      padding: 16px;
       text-align: center;
+      overflow: hidden;
       transition: transform 180ms ease, box-shadow 180ms ease;
-          --win-rgb: 74,163,255;
+      will-change: transform;
+
+      /* highlight vars (overridden by rarity) */
+      --hl-border: rgba(74,163,255,0.45);
+      --hl-glow: rgba(74,163,255,0.28);
+      --hl-inset: rgba(74,163,255,0.55);
+      --hl-a: rgba(74,163,255,0.22);
+      --hl-b: rgba(74,163,255,0.06);
     }
-    
-    /* Rarity glow colors (used by .item.win) */
-    .item[data-rarity="common"] { --win-rgb: 160, 180, 210; }
-    .item[data-rarity="uncommon"] { --win-rgb: 80, 200, 120; }
-    .item[data-rarity="rare"] { --win-rgb: 74, 163, 255; }
-    .item[data-rarity="epic"] { --win-rgb: 186, 104, 255; }
-    .item[data-rarity="legendary"] { --win-rgb: 255, 186, 66; }
-.item.win {
+    .item.win {
       transform: translateY(-2px) scale(1.03);
-      box-shadow: 0 0 0 2px rgba(var(--win-rgb),0.35), 0 0 22px rgba(var(--win-rgb),0.25);
+      box-shadow: 0 0 0 2px var(--hl-border), 0 0 12px var(--hl-glow);
     }
-    .item img { width: 70px; height: 70px; }
+    .item.win::after{
+      content:"";
+      position:absolute;
+      inset:0;
+      border-radius:inherit;
+      /* all the highlight is INSIDE the card (so it won't be clipped) */
+      box-shadow:
+        inset 0 0 0 1px rgba(255,255,255,0.06),
+        inset 0 0 0 2px var(--hl-inset);
+      background: radial-gradient(circle at 50% 0%, var(--hl-a), var(--hl-b) 46%, rgba(0,0,0,0) 72%);
+      pointer-events:none;
+    }
+
+    /* Rarity colors for highlight */
+    .item[data-rarity="common"]{
+      --hl-border: rgba(255,255,255,0.22);
+      --hl-glow: rgba(255,255,255,0.10);
+      --hl-inset: rgba(255,255,255,0.35);
+      --hl-a: rgba(255,255,255,0.14);
+      --hl-b: rgba(255,255,255,0.05);
+    }
+    .item[data-rarity="uncommon"]{
+      --hl-border: rgba(72, 214, 152, 0.45);
+      --hl-glow: rgba(72, 214, 152, 0.24);
+      --hl-inset: rgba(72, 214, 152, 0.60);
+      --hl-a: rgba(72, 214, 152, 0.20);
+      --hl-b: rgba(72, 214, 152, 0.06);
+    }
+    .item[data-rarity="rare"]{
+      --hl-border: rgba(74,163,255,0.45);
+      --hl-glow: rgba(74,163,255,0.28);
+      --hl-inset: rgba(74,163,255,0.60);
+      --hl-a: rgba(74,163,255,0.22);
+      --hl-b: rgba(74,163,255,0.06);
+    }
+    .item[data-rarity="epic"]{
+      --hl-border: rgba(168, 96, 255, 0.45);
+      --hl-glow: rgba(168, 96, 255, 0.25);
+      --hl-inset: rgba(168, 96, 255, 0.62);
+      --hl-a: rgba(168, 96, 255, 0.20);
+      --hl-b: rgba(168, 96, 255, 0.06);
+    }
+    .item[data-rarity="legendary"]{
+      --hl-border: rgba(255, 184, 72, 0.45);
+      --hl-glow: rgba(255, 184, 72, 0.24);
+      --hl-inset: rgba(255, 184, 72, 0.64);
+      --hl-a: rgba(255, 184, 72, 0.20);
+      --hl-b: rgba(255, 184, 72, 0.06);
+    }
+    .item[data-rarity="mythic"]{
+      --hl-border: rgba(255, 90, 190, 0.45);
+      --hl-glow: rgba(255, 90, 190, 0.24);
+      --hl-inset: rgba(255, 90, 190, 0.64);
+      --hl-a: rgba(255, 90, 190, 0.20);
+      --hl-b: rgba(255, 90, 190, 0.06);
+    }
+.item img { width: 86px; height: 86px; }
     .price {
-      margin-top: 6px;
-      font-size: 12px;
+      margin-top: 8px;
+      font-size: 13px;
       background: #1f324a;
       display: inline-block;
-      padding: 4px 8px;
+      padding: 5px 10px;
       border-radius: 999px;
     }
     .pointer {
@@ -406,6 +519,52 @@
     .topup-buy { background:#5b8ecb; }
     .topup-note { margin-top:10px; font-size:12px; opacity:.7; }
 
+    .topup-form{ margin-top: 10px; display:flex; flex-direction:column; gap:8px; }
+    .topup-label{ font-size:12px; opacity:.82; font-weight:800; margin-top:2px; }
+    .topup-field{
+      display:flex; align-items:center; gap:10px;
+      background:#162235;
+      border: 1px solid rgba(255,255,255,0.10);
+      border-radius:14px;
+      padding: 10px 12px;
+    }
+    .topup-field-ico{ opacity:.9; font-size:14px; }
+    .topup-field-suf{ opacity:.65; font-size:12px; font-weight:800; }
+    .topup-field input{
+      flex:1;
+      border:0;
+      outline:0;
+      background:transparent;
+      color:#fff;
+      font-size:14px;
+      font-weight:900;
+      min-width: 0;
+    }
+    .topup-field input::placeholder{ color: rgba(255,255,255,0.45); font-weight:800; }
+    .topup-preview{
+      margin-top: 10px;
+      background: rgba(0,0,0,0.22);
+      border: 1px solid rgba(255,255,255,0.10);
+      border-radius: 14px;
+      padding: 10px 12px;
+    }
+    .topup-preview-row{
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      font-size: 13px;
+      padding: 4px 0;
+    }
+    .topup-preview-row b{ font-weight: 900; }
+    .topup-preview-note{
+      margin-top: 6px;
+      font-size: 12px;
+      opacity: .78;
+    }
+    .topup-pack.active{
+      box-shadow: inset 0 0 0 2px rgba(74,163,255,0.55);
+    }
+
     /* Recent wins */
     .recent-wins{
       margin: 12px 0 0;
@@ -533,11 +692,14 @@
 .lot-h1{font-size:28px;font-weight:900;margin-top:4px;}
 .lot-sub{opacity:.9;text-align:center;max-width:320px;line-height:1.35;font-weight:700;}
 .lot-history-link{
+
   display:flex;align-items:center;gap:8px;
   background:transparent;border:0;color:#57a9ff;
   font-weight:900;font-size:15px;cursor:pointer;
 }
 .lot-history-chev{opacity:.8;margin-left:2px;}
+.lot-history-link-wrap{display:flex;justify-content:center;margin-top:14px;}
+
 .lot-seg{
   width:100%;max-width:340px;
   background:rgba(255,255,255,.06);
@@ -665,12 +827,91 @@
 .lot-history-title{font-weight:900;margin-bottom:8px;}
 .lot-history-body{opacity:.9;font-weight:800;font-size:12px;line-height:1.45;}
 .lot-error{margin-top:12px;color:#ff8a9a;font-weight:900;}
+
+
+/* === Global fonts: Stem (local files placed next to index.html) === */
+@font-face {
+  font-family: "StemR";
+  src: url("./stem.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "StemB";
+  src: url("./stem_bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root{
+  --font-primary: "StemB", system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  --font-secondary: "StemR", system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+}
+
+html, body{
+  font-family: var(--font-primary);
+}
+
+/* Controls should use the same base font */
+button, input, select, textarea{
+  font-family: var(--font-primary);
+}
+
+/* Secondary text helper */
+.secondary-text{
+  font-family: var(--font-secondary) !important;
+  font-weight: 400 !important;
+}
+
+/* Screens/blocks that должны быть вторичным текстом */
+.recent-wins,
+.recent-wins *{
+  font-family: var(--font-secondary) !important;
+  font-weight: 400;
+}
+
+.inv-empty-card,
+.inv-empty-card *{
+  font-family: var(--font-secondary) !important;
+  font-weight: 400;
+}
+
+#topMe,
+#topList .inv-name,
+#topList .inv-sub{
+  font-family: var(--font-secondary) !important;
+  font-weight: 400;
+}
+
+.lot-sub,
+.lot-history-link,
+.lot-day-pill{
+  font-family: var(--font-secondary) !important;
+  font-weight: 400;
+}
+
+/* Lottery card meta: (каждый час) etc. */
+.lot-card-title-meta{
+  font-family: var(--font-secondary) !important;
+  font-weight: 400 !important;
+  font-size: 0.82em;
+  opacity: 0.92;
+}
+
+/* Countdown line should be secondary */
+.lot-card-sub{
+  font-family: var(--font-secondary) !important;
+  font-weight: 400 !important;
+  opacity: 0.92;
+}
 </style>
 </head>
 <body>
 <div class="app">
 <div class="header">
-<div>archicasino</div>
+<div class="brand"><div class="brand__name">archicasino</div><div class="online-badge" title="Сейчас онлайн"><span class="online-dot" aria-hidden="true"></span><span class="online-num" id="onlineCount">—</span></div></div>
 <div style="display:flex; gap:8px; align-items:center;">
 <div id="balanceBadge" style="font-weight:800;font-size:13px;background:#162235;padding:6px 10px;border-radius:999px;">⭐ …</div>
 <div id="topupBtn" style="font-weight:900;font-size:13px;background:#5b8ecb;padding:6px 10px;border-radius:999px;cursor:pointer;user-select:none;-webkit-user-select:none;">
@@ -755,18 +996,14 @@
 </div>
 <div class="lot-h1">Лотереи</div>
 <div class="lot-sub">Участвуйте в лотереях и выигрывайте уникальные подарки</div>
-<button class="lot-history-link" id="lotteryHistoryOpen" type="button">
-<span class="lot-history-ico">🕘</span>
-<span>История лотерей</span>
-<span class="lot-history-chev">›</span>
-</button>
+
 <div class="lot-day-pill" id="lotteryDayPill">В этот день — … 💡</div>
 </div>
 <div class="lot-view" id="lotViewActive">
 <!-- Hourly lottery card -->
 <div class="lot-card lot-card-hour">
 <div class="lot-card-main">
-<div class="lot-card-title">Лотерея (каждый час)</div>
+<div class="lot-card-title">Лотерея <span class="lot-card-title-meta">(каждый час)</span></div>
 <div class="lot-card-sub" id="lotteryCountdown">—</div>
 <button class="lot-card-btn" id="lotteryJoinBtn" type="button">
           Участвовать за <span id="lotteryTicketPriceInline">—</span> ⭐
@@ -774,13 +1011,13 @@
 </div>
 <div class="lot-card-art">🎁</div>
 <div class="lot-card-footer">
-<span class="lot-muted">Пот:</span> <span id="lotteryPot">—</span>
+<span class="lot-muted">Призовой фонд:</span> <span id="lotteryPot">—</span>
 </div>
 </div>
 <!-- 10-min lottery card -->
 <div class="lot-card lot-card-10">
 <div class="lot-card-main">
-<div class="lot-card-title">Лотерея (каждые 10 минут)</div>
+<div class="lot-card-title">Лотерея <span class="lot-card-title-meta">(каждые 10 минут)</span></div>
 <div class="lot-card-sub" id="lottery10Countdown">—</div>
 <button class="lot-card-btn" id="lottery10JoinBtn" type="button">
           Участвовать за <span id="lottery10TicketPriceInline">—</span> ⭐
@@ -788,10 +1025,18 @@
 </div>
 <div class="lot-card-art">⏱️</div>
 <div class="lot-card-footer">
-<span class="lot-muted">Пот:</span> <span id="lottery10Pot">—</span>
+<span class="lot-muted">Призовой фонд:</span> <span id="lottery10Pot">—</span>
 </div>
 </div>
 </div>
+<div class="lot-history-link-wrap">
+<button class="lot-history-link" id="lotteryHistoryOpen" type="button">
+<span class="lot-history-ico">🕘</span>
+<span>История лотерей</span>
+<span class="lot-history-chev">›</span>
+</button>
+</div>
+
 <div class="lot-history" id="lotteryHistoryPanel" style="display:none;">
 <div class="lot-history-title">История лотерей</div>
 <div class="lot-history-body" id="lotteryHistoryBody">Загрузка…</div>
@@ -829,30 +1074,45 @@
 <!-- Topup UI -->
 <div id="topupBackdrop"></div>
 <div id="topupSheet">
-<div class="claim-head" style="margin-bottom:6px;">
-<div class="topup-title">⭐ Пополнение</div>
-<div class="claim-close" id="topupClose">✕</div>
-</div>
-<div class="topup-grid">
-<div class="topup-pack" data-stars="50">50 ⭐<small>быстро</small></div>
-<div class="topup-pack" data-stars="100">100 ⭐<small>оптимально</small></div>
-<div class="topup-pack" data-stars="250">250 ⭐<small>выгодно</small></div>
-</div>
-<div class="topup-custom" style="margin-top:12px;">
-  <div style="font-weight:900;font-size:12px;opacity:.9;margin-bottom:6px;">Своя сумма</div>
-  <div style="display:flex;gap:10px;align-items:center;">
-    <input id="topupCustomInput" type="number" min="1" max="10000" step="1" inputmode="numeric"
-      placeholder="Например, 137"
-      style="flex:1;background:#0f1a2b;border:1px solid rgba(255,255,255,0.12);border-radius:14px;padding:12px 12px;color:#eaf1ff;font-weight:900;outline:none;" />
-    <div style="font-weight:900;opacity:.9;">⭐</div>
+  <div class="claim-head" style="margin-bottom:6px;">
+    <div class="topup-title">⭐ Пополнение</div>
+    <div class="claim-close" id="topupClose">✕</div>
   </div>
-  <div style="font-size:11px;opacity:.65;margin-top:6px;">Вводишь сумму — кнопка «Пополнить» оплатит её.</div>
-</div>
-<div class="topup-footer">
-<button class="btn topup-cancel" id="topupCancel">Отмена</button>
-<button class="btn topup-buy" disabled="" id="topupBuy">Пополнить</button>
-</div>
-<div class="topup-note">Оплата откроется в Telegram. Баланс обновится после успешного платежа.</div>
+
+  <div class="topup-form">
+    <div class="topup-label">Сумма пополнения</div>
+    <div class="topup-field">
+      <span class="topup-field-ico">⭐</span>
+      <input id="topupStarsInput" type="number" inputmode="numeric" min="1" max="10000" placeholder="Например 250" />
+      <span class="topup-field-suf">Stars</span>
+    </div>
+
+    <div class="topup-label">Промокод (опционально)</div>
+    <div class="topup-field">
+      <span class="topup-field-ico">🏷️</span>
+      <input id="topupPromoInput" type="text" placeholder="PROMO2025" />
+    </div>
+  </div>
+
+  <div class="topup-grid" style="margin-top:12px;">
+    <div class="topup-pack" data-stars="50">50 ⭐<small>быстро</small></div>
+    <div class="topup-pack" data-stars="100">100 ⭐<small>оптимально</small></div>
+    <div class="topup-pack" data-stars="250">250 ⭐<small>выгодно</small></div>
+  </div>
+
+  <div class="topup-preview" id="topupPreviewBox" style="display:none;">
+    <div class="topup-preview-row"><span>К оплате</span><b id="topupPayText">⭐ —</b></div>
+    <div class="topup-preview-row"><span>Бонус</span><b id="topupBonusText">—</b></div>
+    <div class="topup-preview-row"><span>Зачислится</span><b id="topupTotalText">⭐ —</b></div>
+    <div class="topup-preview-note" id="topupPromoNote"></div>
+  </div>
+
+  <div class="topup-footer">
+    <button class="btn topup-cancel" id="topupCancel">Отмена</button>
+    <button class="btn topup-buy" disabled id="topupBuy">Пополнить</button>
+  </div>
+
+  <div class="topup-note">Оплата откроется в Telegram. Баланс обновится после успешного платежа.</div>
 </div>
 <script>
     const API_BASE = "https://test-u2mr.onrender.com"; // <-- поменяй на свой бекенд при необходимости
@@ -871,16 +1131,151 @@ window.addEventListener('error', (ev) => {
     const roulette = document.getElementById('roulette');
     const balanceBadge = document.getElementById('balanceBadge');
 
-    const topupBtn = document.getElementById('topupBtn');
+    
+
+const onlineCountEl = document.getElementById('onlineCount');
+
+function getOrCreateSessionId() {
+  try {
+    const key = 'ac_online_sid_v1';
+    let sid = localStorage.getItem(key);
+    if (!sid) {
+      sid = (crypto?.randomUUID?.() || (Date.now().toString(16) + Math.random().toString(16).slice(2)));
+      localStorage.setItem(key, sid);
+    }
+    return sid;
+  } catch (_) {
+    return (Date.now().toString(16) + Math.random().toString(16).slice(2));
+  }
+}
+
+async function initOnlineIndicator() {
+  if (!onlineCountEl) return;
+
+  const sid = getOrCreateSessionId();
+
+  // Desired behavior:
+  // - updates rarely (every 10–20s)
+  // - changes only by 1–3 units
+  // - randomly goes up/down
+  // - still reflects real active users, but smoothed (also 1–3 per update)
+
+  const baseMin = 40, baseMax = 70;
+
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const randInt = (a, b) => Math.floor(Math.random() * (b - a + 1)) + a;
+  const randStep = () => (Math.random() < 0.5 ? -1 : 1) * randInt(1, 3);
+  const randDelay = () => randInt(10_000, 20_000);
+
+  let base = Math.round((baseMin + baseMax) / 2);
+  let activeActual = 0;
+  let activeSmooth = 0;
+  let shown = base; // shown = base + activeSmooth (but we smooth the final number too)
+
+  async function ping() {
+    try {
+      await fetch(`${API_BASE}/online/ping`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: sid }),
+      });
+    } catch (_) {}
+  }
+
+  async function fetchActive() {
+    try {
+      const r = await fetch(`${API_BASE}/online?window_sec=35`, { cache: 'no-store' });
+      const j = await r.json();
+      const n = Number(j?.online ?? 0);
+      if (Number.isFinite(n) && n >= 0) activeActual = n;
+    } catch (_) {}
+  }
+
+  function updateOnce() {
+    // 1) Random-walk base in [40..70] by +-1..3
+    base = clamp(base + randStep(), baseMin, baseMax);
+
+    // 2) Smooth activeActual -> activeSmooth by max 1..3 per update
+    const diffA = activeActual - activeSmooth;
+    if (diffA !== 0) {
+      const stepA = Math.min(Math.abs(diffA), randInt(1, 3));
+      activeSmooth += Math.sign(diffA) * stepA;
+    }
+
+    // 3) Desired total and final smoothing (so the number never jumps more than 1..3)
+    const desired = Math.round(base + activeSmooth);
+    const diff = desired - shown;
+    if (diff !== 0) {
+      const step = Math.min(Math.abs(diff), randInt(1, 3));
+      shown += Math.sign(diff) * step;
+    }
+
+    // Subtle "bump" animation on change
+    onlineCountEl.style.transform = 'translateY(-1px)';
+    onlineCountEl.style.opacity = '0.92';
+    requestAnimationFrame(() => {
+      onlineCountEl.style.transform = 'translateY(0px)';
+      onlineCountEl.style.opacity = '1';
+    });
+
+    onlineCountEl.textContent = String(shown);
+  }
+
+  // kick off
+  onlineCountEl.style.transition = 'transform 220ms ease, opacity 220ms ease';
+  ping();
+  fetchActive().finally(() => {
+    updateOnce();
+  });
+
+  // Keep sessions accurate (doesn't affect how often the number changes)
+  setInterval(ping, 10_000);
+
+  // Main loop: every 10–20s refresh active and apply a tiny random move
+  (function loop() {
+    setTimeout(async () => {
+      await fetchActive();
+      updateOnce();
+      loop();
+    }, randDelay());
+  })();
+}
+
+
+const topupBtn = document.getElementById('topupBtn');
     const topupBackdrop = document.getElementById('topupBackdrop');
     const topupSheet = document.getElementById('topupSheet');
     const topupClose = document.getElementById('topupClose');
     const topupCancel = document.getElementById('topupCancel');
     const topupBuy = document.getElementById('topupBuy');
-    const topupCustomInput = document.getElementById('topupCustomInput');
-    const topupPacks = Array.from(document.querySelectorAll('.topup-pack[data-stars]'));
-    let selectedTopupStars = null;
+    const topupStarsInput = document.getElementById('topupStarsInput');
+    const topupPromoInput = document.getElementById('topupPromoInput');
+    const topupPreviewBox = document.getElementById('topupPreviewBox');
+    const topupPayText = document.getElementById('topupPayText');
+    const topupBonusText = document.getElementById('topupBonusText');
+    const topupTotalText = document.getElementById('topupTotalText');
+    const topupPromoNote = document.getElementById('topupPromoNote');
     let topupInFlight = false;
+    let topupPreviewTimer = null;
+
+    // Quick packs -> fill custom amount
+    try {
+      document.querySelectorAll('#topupSheet .topup-pack').forEach((el) => {
+        const onPick = (e) => {
+          try { e?.preventDefault?.(); } catch (_) {}
+          const s = parseInt(String(el.dataset.stars || '').trim(), 10) || 0;
+          if (topupStarsInput && s > 0) {
+            topupStarsInput.value = String(s);
+            document.querySelectorAll('#topupSheet .topup-pack').forEach(x => x.classList.remove('active'));
+            el.classList.add('active');
+            scheduleTopupPreview();
+            try { tg?.HapticFeedback?.selectionChanged(); } catch (_) {}
+          }
+        };
+        el.addEventListener('click', onPick);
+        el.addEventListener('touchend', onPick, { passive: false });
+      });
+    } catch (_) {}
 
     const screenRoulette = document.getElementById('screenRoulette');
     const screenInventory = document.getElementById('screenInventory');
@@ -1263,8 +1658,8 @@ window.addEventListener('error', (ev) => {
     const item = document.createElement('div');
     item.className = 'item';
     item.dataset.id = String(p.id);
+    item.dataset.rarity = String((p && (p.rarity || p.rarity_name || p.rarity_level)) || 'common').toLowerCase();
 
-    item.dataset.rarity = String((p && p.rarity) ? p.rarity : 'common');
     const img = document.createElement('img');
     img.src = (p.icon_url || '').trim() || giftImageById(p.id);
     img.alt = 'prize';
@@ -1558,7 +1953,7 @@ function fmtHHMMSS(sec) {
             const dt = new Date((Number(last.hour_start) || 0) * 1000);
             const when = dt.toLocaleString();
             const wname = last.winner_name || (last.winner_user_id ? ('User ' + String(last.winner_user_id).slice(-4)) : '—');
-            lotteryLast.textContent = `${when} • Победитель: ${wname} • Пот: ⭐ ${last.total_spent || 0}`;
+            lotteryLast.textContent = `${when} • Победитель: ${wname} • Призовой фонд: ⭐ ${last.total_spent || 0}`;
           } else {
             lotteryLast.textContent = '—';
           }
@@ -1626,7 +2021,7 @@ function fmtHHMMSS(sec) {
             const dt = new Date((Number(last.period_start) || 0) * 1000);
             const when = dt.toLocaleString();
             const wname = last.winner_name || (last.winner_user_id ? ('User ' + String(last.winner_user_id).slice(-4)) : '—');
-            lottery10Last.textContent = `${when} • Победитель: ${wname} • Пот: ⭐ ${last.total_spent || 0}`;
+            lottery10Last.textContent = `${when} • Победитель: ${wname} • Призовой фонд: ⭐ ${last.total_spent || 0}`;
           } else {
             lottery10Last.textContent = '—';
           }
@@ -1733,18 +2128,21 @@ function fmtHHMMSS(sec) {
     
 
         // ===== Topup =====
-    function openTopup() {
-      selectedTopupStars = null;
-      if (topupCustomInput) topupCustomInput.value = '';
-      topupPacks.forEach(p => p.style.boxShadow = '');
-      if (topupBuy) topupBuy.disabled = true;
+    
+function openTopup() {
+  if (topupStarsInput) topupStarsInput.value = '';
+  if (topupPromoInput) topupPromoInput.value = '';
+  document.querySelectorAll('#topupSheet .topup-pack.active').forEach(x => x.classList.remove('active'));
+  if (topupPreviewBox) topupPreviewBox.style.display = 'none';
+  if (topupBuy) topupBuy.disabled = true;
+topupBackdrop.style.display = 'block';
+  topupSheet.style.display = 'block';
+  try { tg?.HapticFeedback?.selectionChanged(); } catch (_) {}
 
-      topupBackdrop.style.display = 'block';
-      topupSheet.style.display = 'block';
-      try { tg?.HapticFeedback?.selectionChanged(); } catch (_) {}
-    }
+  scheduleTopupPreview();
+}
 
-    function closeTopup() {
+function closeTopup() {
       if (topupInFlight) return;
       topupBackdrop.style.display = 'none';
       topupSheet.style.display = 'none';
@@ -1778,27 +2176,32 @@ function fmtHHMMSS(sec) {
       window.open(link, "_blank");
     }
 
-    async function doTopup(stars) {
-      if (topupInFlight) return;
-      topupInFlight = true;
-      if (topupBuy) topupBuy.disabled = true;
+    
+async function doTopup() {
+  if (topupInFlight) return;
+  const stars = parseInt((topupStarsInput?.value || '').trim(), 10) || 0;
+  const promo_code = (topupPromoInput?.value || '').trim();
+  if (stars < 1 || stars > 10000) return;
 
-      try {
-        const res = await apiPost('/topup/create', { initData: tg?.initData || '', stars });
-        const link = res?.invoice_link;
-        if (!link) throw new Error('Сервер не вернул invoice_link. Проверь BOT_TOKEN на бэкенде.');
+  topupInFlight = true;
+  if (topupBuy) topupBuy.disabled = true;
 
-        openInvoiceSmart(link);
-        closeTopup();
-      } catch (e) {
-        alert('Ошибка пополнения: ' + (e?.message || e));
-      } finally {
-        topupInFlight = false;
-        if (topupBuy) topupBuy.disabled = !(selectedTopupStars > 0);
-      }
-    }
+  try {
+    const res = await apiPost('/topup/create', { initData: tg?.initData || '', stars, promo_code });
+    const link = res?.invoice_link;
+    if (!link) throw new Error('Сервер не вернул invoice_link. Проверь BOT_TOKEN на бэкенде.');
 
-    topupBtn?.addEventListener('click', openTopup);
+    openInvoiceSmart(link);
+    closeTopup();
+  } catch (e) {
+    alert('Ошибка пополнения: ' + (e?.message || e));
+  } finally {
+    topupInFlight = false;
+    scheduleTopupPreview();
+  }
+}
+
+topupBtn?.addEventListener('click', openTopup);
     topupBtn?.addEventListener('touchend', (e) => { e.preventDefault(); openTopup(); }, { passive: false });
 
     topupClose?.addEventListener('click', closeTopup);
@@ -1809,41 +2212,70 @@ function fmtHHMMSS(sec) {
 
     topupBackdrop.onclick = (e) => { try { e.preventDefault(); } catch (_) {} closeTopup(); };
 
-    topupPacks.forEach(p => {
-      const pick = () => {
-        if (topupInFlight) return;
-        topupPacks.forEach(x => x.style.boxShadow = '');
-        p.style.boxShadow = 'inset 0 0 0 2px rgba(74,163,255,0.55)';
-        selectedTopupStars = parseInt(p.dataset.stars, 10) || null;
-        if (topupCustomInput) topupCustomInput.value = '';
-        if (topupBuy) topupBuy.disabled = !(selectedTopupStars > 0);
-        try { tg?.HapticFeedback?.selectionChanged(); } catch (_) {}
-      };
-      p.addEventListener('click', pick);
-      p.addEventListener('touchend', (e) => { e.preventDefault(); pick(); }, { passive: false });
-    });
+        // live preview
+        function scheduleTopupPreview() {
+          if (!topupSheet || topupSheet.style.display === 'none') return;
+          if (topupPreviewTimer) clearTimeout(topupPreviewTimer);
+          topupPreviewTimer = setTimeout(updateTopupPreview, 250);
+        }
 
-    
-    // Custom amount input
-    topupCustomInput?.addEventListener('input', () => {
-      if (topupInFlight) return;
-      const raw = String(topupCustomInput.value || '').trim();
-      if (!raw) {
-        selectedTopupStars = null;
-        if (topupBuy) topupBuy.disabled = true;
-        return;
-      }
-      let v = parseInt(raw, 10);
-      if (!Number.isFinite(v)) v = 0;
-      v = Math.max(1, Math.min(10000, v));
-      // keep value clamped
-      if (String(v) !== raw) topupCustomInput.value = String(v);
-      topupPacks.forEach(x => x.style.boxShadow = '');
-      selectedTopupStars = v;
-      if (topupBuy) topupBuy.disabled = !(selectedTopupStars > 0);
-    });
-topupBuy?.addEventListener('click', () => selectedTopupStars && doTopup(selectedTopupStars));
-    topupBuy?.addEventListener('touchend', (e) => { e.preventDefault(); selectedTopupStars && doTopup(selectedTopupStars); }, { passive: false });
+        async function updateTopupPreview() {
+          if (topupInFlight) return;
+          const stars = parseInt((topupStarsInput?.value || '').trim(), 10) || 0;
+          const promo_code = (topupPromoInput?.value || '').trim();
+
+          if (!(stars >= 1 && stars <= 10000)) {
+            if (topupPreviewBox) topupPreviewBox.style.display = 'none';
+            if (topupBuy) topupBuy.disabled = true;
+            return;
+          }
+
+          try {
+            const res = await apiPost('/topup/preview', { initData: tg?.initData || '', stars, promo_code });
+            const pay = Number(res?.stars_to_pay ?? stars) || stars;
+            const bonus = Number(res?.bonus ?? 0) || 0;
+            const total = Number(res?.total_credit ?? (pay + bonus)) || (pay + bonus);
+
+            if (topupPayText) topupPayText.textContent = `⭐ ${pay}`;
+            if (topupBonusText) topupBonusText.textContent = bonus > 0 ? `+⭐ ${bonus}` : '—';
+            if (topupTotalText) topupTotalText.textContent = `⭐ ${total}`;
+
+            let note = '';
+            const p = res?.promo;
+            if (promo_code && p && p.applied) note = `Промокод ${p.code}: бонус +⭐ ${p.bonus}`;
+            else if (promo_code && p && !p.applied) {
+              const reason = p.reason || 'не подходит';
+              const map = {
+                not_found: 'не найден',
+                inactive: 'не активен',
+                not_started: 'ещё не начался',
+                expired: 'истёк',
+                limit_reached: 'лимит исчерпан',
+                already_used: 'уже использован',
+              };
+              note = `Промокод: ${map[reason] || reason}`;
+            }
+            if (topupPromoNote) topupPromoNote.textContent = note;
+            if (topupPreviewBox) topupPreviewBox.style.display = 'block';
+            if (topupBuy) topupBuy.disabled = false;
+          } catch (e) {
+            if (topupPromoNote) topupPromoNote.textContent = '';
+            if (topupPreviewBox) topupPreviewBox.style.display = 'none';
+            if (topupBuy) topupBuy.disabled = false;
+          }
+        }
+
+        if (topupStarsInput) {
+          topupStarsInput.addEventListener('input', scheduleTopupPreview);
+          topupStarsInput.addEventListener('change', scheduleTopupPreview);
+        }
+        if (topupPromoInput) {
+          topupPromoInput.addEventListener('input', scheduleTopupPreview);
+          topupPromoInput.addEventListener('change', scheduleTopupPreview);
+        }
+
+        topupBuy?.addEventListener('click', () => doTopup());
+    topupBuy?.addEventListener('touchend', (e) => { e.preventDefault(); doTopup(); }, { passive: false });
 
     // ===== Claim (prize) =====
     function openClaim(prize) {
@@ -1990,6 +2422,15 @@ topupBuy?.addEventListener('click', () => selectedTopupStars && doTopup(selected
 
     function easeOutCubic(t) { return 1 - Math.pow(1 - t, 3); }
 
+    function getScrollLeftToCenter(el) {
+      const rRect = r.getBoundingClientRect();
+      const eRect = el.getBoundingClientRect();
+      const rCenter = rRect.left + rRect.width / 2;
+      const eCenter = eRect.left + eRect.width / 2;
+      const bias = parseFloat(getComputedStyle(r).getPropertyValue('--center-bias')) || 0;
+      return Math.round(r.scrollLeft + (eCenter - rCenter) + bias);
+    }
+
     async function spinToPrize(prize) {
       initInfiniteRoulette();
 
@@ -2019,7 +2460,7 @@ topupBuy?.addEventListener('click', () => selectedTopupStars && doTopup(selected
       const target = pickForwardTarget(prize.id);
       if (!target) throw new Error('Не найден item для приза');
 
-      let to = (target.offsetLeft + target.clientWidth / 2) - (r.clientWidth / 2);
+      let to = getScrollLeftToCenter(target);
       let from = r.scrollLeft;
       const STOP_MS = 1600;
 
@@ -2079,6 +2520,7 @@ topupBuy?.addEventListener('click', () => selectedTopupStars && doTopup(selected
     await refreshPrizes();
     initInfiniteRoulette();
     refreshBalance();
+    initOnlineIndicator();
     refreshRecentWins();
     setInterval(refreshRecentWins, 12000);
     refreshInventory();
