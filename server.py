@@ -2,7 +2,6 @@ import os
 import json
 import time
 import random
-import re
 import asyncio
 import uuid
 import hmac
@@ -142,30 +141,10 @@ class InventoryWithdrawReq(WithInitData):
 
 class TopupCreateReq(WithInitData):
     stars: int
-    promo_code: Optional[str] = None
 
 
 class LeaderboardReq(WithInitData):
     limit: int = 30
-
-
-class OnlinePingReq(BaseModel):
-    session_id: str
-
-
-class TopupPreviewReq(WithInitData):
-    stars: int
-    promo_code: Optional[str] = None
-
-
-class PromoCodeIn(BaseModel):
-    code: str
-    bonus_percent: int = 0
-    bonus_flat: int = 0
-    max_uses: Optional[int] = None
-    is_active: bool = True
-    valid_from: Optional[int] = None
-    valid_to: Optional[int] = None
 
 
 class AdminAdjustReq(BaseModel):
@@ -178,13 +157,13 @@ class PrizeIn(BaseModel):
     icon_url: Optional[str] = None
     cost: int
     weight: int
+    rarity: Literal["common","uncommon","rare","epic","legendary"] = 'common'
     # Telegram Gift id for regular gifts (used by sendGift)
     gift_id: Optional[str] = None
     # Unique gifts are handled via admin claims (manual fulfillment)
     is_unique: bool = False
     is_active: bool = True
     sort_order: int = 0
-    rarity: Literal["common","uncommon","rare","epic","legendary"] = "common"
 
 
 class PrizeOut(PrizeIn):
@@ -250,6 +229,7 @@ def init_db():
                 )
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_prizes_active_sort ON prizes(is_active, sort_order, id)")
                 cur.execute("ALTER TABLE prizes ADD COLUMN IF NOT EXISTS icon_url TEXT")
+                cur.execute("ALTER TABLE prizes ADD COLUMN IF NOT EXISTS rarity TEXT NOT NULL DEFAULT 'common'")
 
                 # spins / inventory / topups
                 cur.execute(
@@ -294,121 +274,6 @@ def init_db():
                 )
 
                 
-                # --- Schema upgrades: rarity, promos, online sessions, topup bonus ---
-                cur.execute("ALTER TABLE prizes ADD COLUMN IF NOT EXISTS rarity TEXT NOT NULL DEFAULT 'common'")
-                cur.execute("ALTER TABLE topups ADD COLUMN IF NOT EXISTS promo_code TEXT")
-                cur.execute("ALTER TABLE topups ADD COLUMN IF NOT EXISTS bonus_amount INTEGER NOT NULL DEFAULT 0")
-
-                # promo codes (bonus on top of paid amount)
-                cur.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS promo_codes (
-                      code TEXT PRIMARY KEY,
-                      bonus_percent INTEGER NOT NULL DEFAULT 0,
-                      bonus_flat INTEGER NOT NULL DEFAULT 0,
-                      max_uses INTEGER,
-                      used_count INTEGER NOT NULL DEFAULT 0,
-                      is_active BOOLEAN NOT NULL DEFAULT TRUE,
-                      valid_from BIGINT,
-                      valid_to BIGINT,
-                      created_at BIGINT NOT NULL
-                    )
-                    """
-                )
-                cur.execute("CREATE INDEX IF NOT EXISTS idx_promo_codes_active ON promo_codes(is_active)")
-
-                # ensure promo_codes schema (older DBs may have a promo_codes table without these columns)
-                cur.execute("ALTER TABLE promo_codes ADD COLUMN IF NOT EXISTS bonus_percent INTEGER NOT NULL DEFAULT 0")
-                cur.execute("ALTER TABLE promo_codes ADD COLUMN IF NOT EXISTS bonus_flat INTEGER NOT NULL DEFAULT 0")
-                cur.execute("ALTER TABLE promo_codes ADD COLUMN IF NOT EXISTS max_uses INTEGER")
-                cur.execute("ALTER TABLE promo_codes ADD COLUMN IF NOT EXISTS used_count INTEGER NOT NULL DEFAULT 0")
-                cur.execute("ALTER TABLE promo_codes ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE")
-                cur.execute("ALTER TABLE promo_codes ADD COLUMN IF NOT EXISTS valid_from BIGINT")
-                cur.execute("ALTER TABLE promo_codes ADD COLUMN IF NOT EXISTS valid_to BIGINT")
-                cur.execute("ALTER TABLE promo_codes ADD COLUMN IF NOT EXISTS created_at BIGINT")
-                cur.execute(
-                    """
-                    DO $$
-                    BEGIN
-                      IF EXISTS (
-                        SELECT 1 FROM information_schema.columns
-                        WHERE table_schema = 'public' AND table_name = 'promo_codes' AND column_name = 'created_at'
-                          AND data_type IN ('bigint', 'integer')
-                      ) THEN
-                        UPDATE promo_codes
-                        SET created_at = EXTRACT(EPOCH FROM NOW())::BIGINT
-                        WHERE created_at IS NULL;
-                      END IF;
-                    END $$;
-                    """
-                )
-
-                # best-effort migration from older column names (if they exist)
-                cur.execute(
-                    """
-                    DO $$
-                    BEGIN
-                      IF EXISTS (
-                        SELECT 1 FROM information_schema.columns
-                        WHERE table_schema = 'public' AND table_name = 'promo_codes' AND column_name = 'bonus'
-                      ) THEN
-                        UPDATE promo_codes
-                        SET bonus_percent = bonus
-                        WHERE (bonus_percent IS NULL OR bonus_percent = 0) AND bonus IS NOT NULL;
-                      END IF;
-
-                      IF EXISTS (
-                        SELECT 1 FROM information_schema.columns
-                        WHERE table_schema = 'public' AND table_name = 'promo_codes' AND column_name = 'bonus_pct'
-                      ) THEN
-                        UPDATE promo_codes
-                        SET bonus_percent = bonus_pct
-                        WHERE (bonus_percent IS NULL OR bonus_percent = 0) AND bonus_pct IS NOT NULL;
-                      END IF;
-
-                      IF EXISTS (
-                        SELECT 1 FROM information_schema.columns
-                        WHERE table_schema = 'public' AND table_name = 'promo_codes' AND column_name = 'bonus_amount'
-                      ) THEN
-                        UPDATE promo_codes
-                        SET bonus_flat = bonus_amount
-                        WHERE (bonus_flat IS NULL OR bonus_flat = 0) AND bonus_amount IS NOT NULL;
-                      END IF;
-
-                      IF EXISTS (
-                        SELECT 1 FROM information_schema.columns
-                        WHERE table_schema = 'public' AND table_name = 'promo_codes' AND column_name = 'bonus_stars'
-                      ) THEN
-                        UPDATE promo_codes
-                        SET bonus_flat = bonus_stars
-                        WHERE (bonus_flat IS NULL OR bonus_flat = 0) AND bonus_stars IS NOT NULL;
-                      END IF;
-                    END $$;
-                    """
-                )
-                cur.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS promo_redemptions (
-                      code TEXT NOT NULL REFERENCES promo_codes(code) ON DELETE CASCADE,
-                      tg_user_id TEXT NOT NULL REFERENCES users(tg_user_id) ON DELETE CASCADE,
-                      used_at BIGINT NOT NULL,
-                      PRIMARY KEY (code, tg_user_id)
-                    )
-                    """
-                )
-                cur.execute("CREATE INDEX IF NOT EXISTS idx_promo_redemptions_user ON promo_redemptions(tg_user_id)")
-
-                # online sessions (for header online indicator)
-                cur.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS online_sessions (
-                      session_id TEXT PRIMARY KEY,
-                      last_seen BIGINT NOT NULL
-                    )
-                    """
-                )
-                cur.execute("CREATE INDEX IF NOT EXISTS idx_online_sessions_last_seen ON online_sessions(last_seen)")
-
                 # --- Schema upgrades (cases, gifts, claims, withdraw locks) ---
                 cur.execute("ALTER TABLE prizes ADD COLUMN IF NOT EXISTS gift_id TEXT")
                 cur.execute("ALTER TABLE prizes ADD COLUMN IF NOT EXISTS is_unique BOOLEAN NOT NULL DEFAULT FALSE")
@@ -624,37 +489,6 @@ def require_admin(request: Request):
     got = request.headers.get("X-Admin-Key", "")
     if not got or not hmac.compare_digest(got, ADMIN_KEY):
         raise HTTPException(status_code=401, detail="admin unauthorized")
-
-
-
-# ===== Online (active sessions) =====
-@app.post("/online/ping")
-def online_ping(req: OnlinePingReq):
-    sid = (req.session_id or "").strip()
-    if not sid or len(sid) > 128:
-        raise HTTPException(status_code=400, detail="bad session_id")
-    now = int(time.time())
-    with pool.connection() as con:
-        with con:
-            with con.cursor() as cur:
-                cur.execute(
-                    "INSERT INTO online_sessions (session_id, last_seen) VALUES (%s, %s) "
-                    "ON CONFLICT (session_id) DO UPDATE SET last_seen = EXCLUDED.last_seen",
-                    (sid, now),
-                )
-    return {"ok": True, "ts": now}
-
-
-@app.get("/online")
-def online_count(window_sec: int = Query(35, ge=5, le=300)):
-    now = int(time.time())
-    since = now - int(window_sec)
-    with pool.connection() as con:
-        with con:
-            with con.cursor() as cur:
-                cur.execute("SELECT COUNT(*) FROM online_sessions WHERE last_seen >= %s", (since,))
-                cnt = int(cur.fetchone()[0] or 0)
-    return {"online": cnt, "window_sec": int(window_sec), "ts": now}
 
 
 # ===== Telegram initData verify (WebApp) =====
@@ -1056,13 +890,19 @@ def get_or_create_user(cur, tg_user_id: str, public: Optional[dict] = None) -> i
 
 def fetch_active_prizes(cur) -> list[dict]:
     cur.execute(
-        "SELECT id, name, icon_url, cost, weight, COALESCE(rarity,'common') FROM prizes "
+        "SELECT id, name, icon_url, cost, weight, rarity FROM prizes "
         "WHERE is_active = TRUE AND weight > 0 "
         "ORDER BY sort_order ASC, id ASC"
     )
     rows = cur.fetchall()
-    return [{"id": int(r[0]), "name": str(r[1]), "icon_url": (str(r[2]).strip() if r[2] is not None else None), "cost": int(r[3]), "weight": int(r[4]), "rarity": (str(r[5]) if r[5] is not None else 'common')} for r in rows]
-
+    return [{
+        "id": int(r[0]),
+        "name": str(r[1]),
+        "icon_url": (str(r[2]).strip() if r[2] is not None else None),
+        "cost": int(r[3]),
+        "weight": int(r[4]),
+        "rarity": (str(r[5]) if r[5] is not None else "common"),
+    } for r in rows]
 
 def fetch_active_cases(cur) -> list[dict]:
     cur.execute(
@@ -1084,7 +924,7 @@ def fetch_active_cases(cur) -> list[dict]:
 
 def fetch_case_prizes(cur, case_id: int) -> list[dict]:
     cur.execute(
-        "SELECT p.id, p.name, p.icon_url, p.cost, cp.weight, COALESCE(p.rarity,'common') "
+        "SELECT p.id, p.name, p.icon_url, p.cost, cp.weight, p.rarity "
         "FROM case_prizes cp "
         "JOIN prizes p ON p.id = cp.prize_id "
         "WHERE cp.case_id=%s AND cp.is_active=TRUE AND p.is_active=TRUE AND cp.weight > 0 "
@@ -1095,12 +935,11 @@ def fetch_case_prizes(cur, case_id: int) -> list[dict]:
     return [{
         "id": int(r[0]),
         "name": str(r[1]),
-        "icon_url": ((r[2] or '').strip() or None),
+        "icon_url": ((r[2] or "").strip() or None),
         "cost": int(r[3]),
         "weight": int(r[4]),
-        "rarity": (str(r[5]) if r[5] is not None else 'common'),
+        "rarity": (str(r[5]) if r[5] is not None else "common"),
     } for r in rows]
-
 
 def get_balance(cur, uid: str) -> int:
     cur.execute("SELECT balance FROM users WHERE tg_user_id=%s", (uid,))
@@ -1139,7 +978,7 @@ def prizes(req: MeReq):
                 public = extract_tg_user_public(req.initData)
                 get_or_create_user(cur, uid, public)
                 cur.execute(
-                    "SELECT id, name, cost, icon_url "
+                    "SELECT id, name, cost, icon_url, rarity "
                     "FROM prizes WHERE is_active = TRUE "
                     "ORDER BY sort_order ASC, id ASC"
                 )
@@ -1154,7 +993,7 @@ def prizes(req: MeReq):
             "name": str(r[1]),
             "cost": int(r[2]),
             "icon_url": icon_url,
-            "rarity": (str(r[4]) if r[4] is not None else 'common'),
+            "rarity": (str(r[4]) if r[4] is not None else "common"),
         })
     return {"items": items}
 
@@ -1563,118 +1402,10 @@ def recent_wins(req: MeReq):
     return {"items": items}
 
 
-
-def _norm_promo(code: Optional[str]) -> Optional[str]:
-    if not code:
-        return None
-    c = str(code).strip().upper()
-    if not c or len(c) > 32:
-        return None
-    if not re.match(r"^[A-Z0-9_-]+$", c):
-        return None
-    return c
-
-
-def _promo_preview(cur, uid: str, stars: int, code: Optional[str]) -> dict:
-    c = _norm_promo(code)
-    if not c:
-        return {"applied": False, "code": None, "bonus": 0, "reason": None}
-
-    now = int(time.time())
-    cur.execute(
-        "SELECT bonus_percent, bonus_flat, max_uses, used_count, is_active, valid_from, valid_to "
-        "FROM promo_codes WHERE code=%s",
-        (c,),
-    )
-    row = cur.fetchone()
-    if not row:
-        return {"applied": False, "code": c, "bonus": 0, "reason": "not_found"}
-
-    bonus_percent, bonus_flat, max_uses, used_count, is_active, valid_from, valid_to = row
-    if not bool(is_active):
-        return {"applied": False, "code": c, "bonus": 0, "reason": "inactive"}
-    if valid_from and now < int(valid_from):
-        return {"applied": False, "code": c, "bonus": 0, "reason": "not_started"}
-    if valid_to and now > int(valid_to):
-        return {"applied": False, "code": c, "bonus": 0, "reason": "expired"}
-    if max_uses is not None and int(used_count) >= int(max_uses):
-        return {"applied": False, "code": c, "bonus": 0, "reason": "limit_reached"}
-
-    cur.execute("SELECT 1 FROM promo_redemptions WHERE code=%s AND tg_user_id=%s", (c, uid))
-    if cur.fetchone():
-        return {"applied": False, "code": c, "bonus": 0, "reason": "already_used"}
-
-    bonus = int(stars * int(bonus_percent) / 100) + int(bonus_flat)
-    bonus = max(0, bonus)
-    return {"applied": True, "code": c, "bonus": bonus, "reason": None}
-
-
-def _promo_consume(cur, uid: str, stars: int, code: Optional[str]) -> tuple[int, Optional[str]]:
-    """Consume promo on successful payment (variant A: bonus on top of paid amount)."""
-    c = _norm_promo(code)
-    if not c:
-        return 0, None
-
-    now = int(time.time())
-    cur.execute(
-        "SELECT bonus_percent, bonus_flat, max_uses, used_count, is_active, valid_from, valid_to "
-        "FROM promo_codes WHERE code=%s FOR UPDATE",
-        (c,),
-    )
-    row = cur.fetchone()
-    if not row:
-        return 0, c
-
-    bonus_percent, bonus_flat, max_uses, used_count, is_active, valid_from, valid_to = row
-    if not bool(is_active):
-        return 0, c
-    if valid_from and now < int(valid_from):
-        return 0, c
-    if valid_to and now > int(valid_to):
-        return 0, c
-    if max_uses is not None and int(used_count) >= int(max_uses):
-        return 0, c
-
-    cur.execute("SELECT 1 FROM promo_redemptions WHERE code=%s AND tg_user_id=%s", (c, uid))
-    if cur.fetchone():
-        return 0, c
-
-    cur.execute("INSERT INTO promo_redemptions (code, tg_user_id, used_at) VALUES (%s,%s,%s)", (c, uid, now))
-    cur.execute("UPDATE promo_codes SET used_count = used_count + 1 WHERE code=%s", (c,))
-
-    bonus = int(stars * int(bonus_percent) / 100) + int(bonus_flat)
-    bonus = max(0, bonus)
-    return bonus, c
-
-
-@app.post("/topup/preview")
-def topup_preview(req: TopupPreviewReq):
-    uid = extract_tg_user_id(req.initData)
-    stars = int(req.stars or 0)
-    promo_code = _norm_promo(getattr(req, 'promo_code', None))
-    if stars < 1 or stars > 10000:
-        raise HTTPException(status_code=400, detail="bad stars amount")
-
-    with pool.connection() as con:
-        with con:
-            with con.cursor() as cur:
-                public = extract_tg_user_public(req.initData)
-                get_or_create_user(cur, uid, public)
-                promo = _promo_preview(cur, uid, stars, req.promo_code)
-
-    return {
-        "stars_to_pay": stars,
-        "bonus": int(promo["bonus"]),
-        "total_credit": int(stars + int(promo["bonus"])),
-        "promo": promo,
-    }
-
-
 @app.post("/topup/create")
 def topup_create(req: TopupCreateReq):
     uid = extract_tg_user_id(req.initData)
     stars = int(req.stars or 0)
-    promo_code = _norm_promo(getattr(req, 'promo_code', None))
     if stars < 1 or stars > 10000:
         raise HTTPException(status_code=400, detail="bad stars amount")
 
@@ -1689,12 +1420,12 @@ def topup_create(req: TopupCreateReq):
                 cur.execute(
                     "INSERT INTO topups (tg_user_id, payload, stars_amount, status, created_at) "
                     "VALUES (%s,%s,%s,'created',%s)",
-                    (uid, payload, stars, now, promo_code),
+                    (uid, payload, stars, now),
                 )
 
     invoice_link = tg_api("createInvoiceLink", {
         "title": "Пополнение баланса",
-        "description": f"+{stars} ⭐ в игре" + (" (промо бонус после оплаты)" if promo_code else ""),
+        "description": f"+{stars} ⭐ в игре",
         "payload": payload,
         "currency": "XTR",
         "prices": [{"label": f"+{stars} ⭐", "amount": stars}],
@@ -1744,113 +1475,15 @@ async def tg_webhook(request: Request):
                     if total_amount != expected:
                         return {"ok": True}
 
-                                        # apply promo bonus (if attached) only after successful payment
-                    bonus = 0
-                    cur.execute("SELECT promo_code FROM topups WHERE payload=%s", (invoice_payload,))
-                    prow = cur.fetchone()
-                    if prow and prow[0]:
-                        bonus, _ = _promo_consume(cur, uid, expected, str(prow[0]))
-
-                    cur.execute("UPDATE users SET balance = balance + %s WHERE tg_user_id=%s", (expected + int(bonus), uid))
+                    cur.execute("UPDATE users SET balance = balance + %s WHERE tg_user_id=%s", (expected, uid))
                     cur.execute(
-                        "UPDATE topups SET status='paid', telegram_charge_id=%s, paid_at=%s, bonus_amount=%s WHERE payload=%s",
-                        (telegram_charge_id, int(time.time()), int(bonus), invoice_payload),
+                        "UPDATE topups SET status='paid', telegram_charge_id=%s, paid_at=%s WHERE payload=%s",
+                        (telegram_charge_id, int(time.time()), invoice_payload),
                     )
 
         return {"ok": True}
 
     return {"ok": True}
-
-
-
-# ===== Admin: Promo codes =====
-@app.get("/admin/promocodes")
-def admin_list_promocodes(request: Request):
-    require_admin(request)
-    with pool.connection() as con:
-        with con:
-            with con.cursor() as cur:
-                cur.execute(
-                    "SELECT code, bonus_percent, bonus_flat, max_uses, used_count, is_active, valid_from, valid_to, created_at "
-                    "FROM promo_codes ORDER BY created_at DESC"
-                )
-                rows = cur.fetchall()
-    return {"items": [{
-        "code": str(r[0]),
-        "bonus_percent": int(r[1]),
-        "bonus_flat": int(r[2]),
-        "max_uses": (int(r[3]) if r[3] is not None else None),
-        "used_count": int(r[4]),
-        "is_active": bool(r[5]),
-        "valid_from": (int(r[6]) if r[6] is not None else None),
-        "valid_to": (int(r[7]) if r[7] is not None else None),
-        "created_at": int(r[8]),
-    } for r in rows]}
-
-
-@app.post("/admin/promocodes")
-def admin_create_promocode(request: Request, req: PromoCodeIn):
-    require_admin(request)
-    code = _norm_promo(req.code)
-    if not code:
-        raise HTTPException(status_code=400, detail="bad code")
-    now = int(time.time())
-    bp = max(0, min(1000, int(req.bonus_percent or 0)))
-    bf = max(0, min(100000, int(req.bonus_flat or 0)))
-    max_uses = (int(req.max_uses) if req.max_uses is not None else None)
-    if max_uses is not None and max_uses < 0:
-        raise HTTPException(status_code=400, detail="bad max_uses")
-
-    with pool.connection() as con:
-        with con:
-            with con.cursor() as cur:
-                cur.execute(
-                    "INSERT INTO promo_codes (code, bonus_percent, bonus_flat, max_uses, used_count, is_active, valid_from, valid_to, created_at) "
-                    "VALUES (%s,%s,%s,%s,0,%s,%s,%s,%s) "
-                    "ON CONFLICT (code) DO UPDATE SET bonus_percent=EXCLUDED.bonus_percent, bonus_flat=EXCLUDED.bonus_flat, "
-                    "max_uses=EXCLUDED.max_uses, is_active=EXCLUDED.is_active, valid_from=EXCLUDED.valid_from, valid_to=EXCLUDED.valid_to",
-                    (code, bp, bf, max_uses, bool(req.is_active), req.valid_from, req.valid_to, now),
-                )
-    return {"ok": True, "code": code}
-
-
-@app.put("/admin/promocodes/{code}")
-def admin_update_promocode(request: Request, code: str, req: PromoCodeIn):
-    require_admin(request)
-    c = _norm_promo(code)
-    if not c:
-        raise HTTPException(status_code=400, detail="bad code")
-    bp = max(0, min(1000, int(req.bonus_percent or 0)))
-    bf = max(0, min(100000, int(req.bonus_flat or 0)))
-    max_uses = (int(req.max_uses) if req.max_uses is not None else None)
-    with pool.connection() as con:
-        with con:
-            with con.cursor() as cur:
-                cur.execute(
-                    "UPDATE promo_codes SET bonus_percent=%s, bonus_flat=%s, max_uses=%s, is_active=%s, valid_from=%s, valid_to=%s "
-                    "WHERE code=%s RETURNING code",
-                    (bp, bf, max_uses, bool(req.is_active), req.valid_from, req.valid_to, c),
-                )
-                if not cur.fetchone():
-                    raise HTTPException(status_code=404, detail="not found")
-    return {"ok": True, "code": c}
-
-
-@app.delete("/admin/promocodes/{code}")
-def admin_delete_promocode(request: Request, code: str):
-    require_admin(request)
-    c = _norm_promo(code)
-    if not c:
-        raise HTTPException(status_code=400, detail="bad code")
-    with pool.connection() as con:
-        with con:
-            with con.cursor() as cur:
-                cur.execute("DELETE FROM promo_codes WHERE code=%s RETURNING code", (c,))
-                if not cur.fetchone():
-                    raise HTTPException(status_code=404, detail="not found")
-    return {"ok": True, "deleted": c}
-
-
 
 
 # ===== Admin API =====
@@ -2465,8 +2098,6 @@ def admin_user(request: Request, tg_user_id: str):
             "status": t[2],
             "created_at": int(t[3]),
             "paid_at": int(t[4]) if t[4] else None,
-            "promo_code": (str(t[5]) if t[5] else None),
-            "bonus_amount": (int(t[6]) if t[6] is not None else 0),
         } for t in topups],
     }
 
@@ -2499,7 +2130,7 @@ def admin_list_prizes(request: Request):
         with con:
             with con.cursor() as cur:
                 cur.execute(
-                    "SELECT id, name, icon_url, cost, weight, gift_id, is_unique, is_active, sort_order, created_at, COALESCE(rarity, 'common') "
+                    "SELECT id, name, icon_url, cost, weight, rarity, gift_id, is_unique, is_active, sort_order, created_at "
                     "FROM prizes ORDER BY sort_order ASC, id ASC"
                 )
                 rows = cur.fetchall()
@@ -2511,12 +2142,12 @@ def admin_list_prizes(request: Request):
             "icon_url": ((r[2] or "").strip() or None),
             "cost": int(r[3]),
             "weight": int(r[4]),
-            "gift_id": (str(r[5]) if r[5] is not None and str(r[5]).strip() else None),
-            "is_unique": bool(r[6]),
-            "is_active": bool(r[7]),
-            "sort_order": int(r[8]),
-            "created_at": int(r[9]),
-            "rarity": (str(r[10]) if r[10] is not None else 'common'),
+            "rarity": (str(r[5]) if r[5] is not None else "common"),
+            "gift_id": (str(r[6]) if r[6] is not None and str(r[6]).strip() else None),
+            "is_unique": bool(r[7]),
+            "is_active": bool(r[8]),
+            "sort_order": int(r[9]),
+            "created_at": int(r[10]),
         })
     return {"items": items}
 
@@ -2533,7 +2164,7 @@ def admin_create_prize(request: Request, req: PrizeIn):
                 new_id = int(cur.fetchone()[0])
 
                 cur.execute(
-                    "INSERT INTO prizes (id, name, icon_url, cost, weight, gift_id, is_unique, is_active, sort_order, created_at, rarity) "
+                    "INSERT INTO prizes (id, name, icon_url, cost, weight, rarity, gift_id, is_unique, is_active, sort_order, created_at) "
                     "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                     (
                         new_id,
@@ -2541,12 +2172,12 @@ def admin_create_prize(request: Request, req: PrizeIn):
                         (req.icon_url or None),
                         int(req.cost),
                         int(req.weight),
+                        str(req.rarity or 'common'),
                         (req.gift_id or None),
                         bool(req.is_unique),
                         bool(req.is_active),
                         int(req.sort_order),
                         now,
-                        str(getattr(req, 'rarity', 'common') or 'common'),
                     ),
                 )
     return {"id": new_id, "created_at": now, **req.model_dump()}
@@ -2559,19 +2190,19 @@ def admin_update_prize(request: Request, prize_id: int, req: PrizeIn):
         with con:
             with con.cursor() as cur:
                 cur.execute(
-                    "UPDATE prizes SET name=%s, icon_url=%s, cost=%s, weight=%s, gift_id=%s, is_unique=%s, "
-                    "is_active=%s, sort_order=%s, rarity=%s "
+                    "UPDATE prizes SET name=%s, icon_url=%s, cost=%s, weight=%s, rarity=%s, gift_id=%s, is_unique=%s, "
+                    "is_active=%s, sort_order=%s "
                     "WHERE id=%s RETURNING created_at",
                     (
                         req.name,
                         (req.icon_url or None),
                         int(req.cost),
                         int(req.weight),
+                        str(req.rarity or 'common'),
                         (req.gift_id or None),
                         bool(req.is_unique),
                         bool(req.is_active),
                         int(req.sort_order),
-                        str(getattr(req, 'rarity', 'common') or 'common'),
                         int(prize_id),
                     ),
                 )
@@ -2642,7 +2273,7 @@ def admin_update_case(request: Request, case_id: int, req: CaseIn):
         with con:
             with con.cursor() as cur:
                 cur.execute(
-                    "UPDATE cases SET name=%s, description=%s, cover_url=%s, price=%s, is_active=%s, sort_order=%s, rarity=%s "
+                    "UPDATE cases SET name=%s, description=%s, cover_url=%s, price=%s, is_active=%s, sort_order=%s "
                     "WHERE id=%s RETURNING created_at",
                     (req.name, (req.description or None), (req.cover_url or None), int(req.price), bool(req.is_active), int(req.sort_order), int(case_id)),
                 )

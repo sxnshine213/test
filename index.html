@@ -33,58 +33,7 @@
       font-weight: 700;
       font-size: 16px;
     }
-    
-
-.brand{
-  display:flex;
-  align-items:center;
-  gap: 10px;
-  min-width: 0;
-}
-.brand__name{
-  font-weight: 900;
-  letter-spacing: 0.2px;
-  white-space: nowrap;
-}
-.online-badge{
-  display:flex;
-  align-items:center;
-  gap: 6px;
-  background: rgba(22,34,53,0.85);
-  border: 1px solid rgba(255,255,255,0.10);
-  border-radius: 999px;
-  padding: 4px 8px;
-  font-weight: 900;
-  font-size: 12px;
-  line-height: 1;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
-}
-.online-dot{
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
-  background: #3bff82;
-  box-shadow: 0 0 0 4px rgba(59,255,130,0.12), 0 0 18px rgba(59,255,130,0.25);
-  position: relative;
-}
-.online-dot::after{
-  content:"";
-  position:absolute;
-  inset:-6px;
-  border-radius:999px;
-  border: 1px solid rgba(59,255,130,0.30);
-  opacity: 0.0;
-  transform: scale(0.6);
-  animation: onlinePulse 1.6s ease-out infinite;
-}
-@keyframes onlinePulse{
-  0% { opacity: 0.55; transform: scale(0.6); }
-  70%{ opacity: 0.0; transform: scale(1.35); }
-  100%{ opacity: 0.0; transform: scale(1.35); }
-}
-.online-num{ font-variant-numeric: tabular-nums; }
-
-.tabs { display: flex; gap: 10px; }
+    .tabs { display: flex; gap: 10px; }
     .pill {
       flex: 1;
       background: #162235;
@@ -181,15 +130,11 @@
       padding: 20px 0 14px;
     }
     .roulette {
-      /* Centering bias can be used if some devices still look ~1-2px off */
-      --center-bias: 0px;
-
       display: flex;
       flex-direction: row;
       flex-wrap: nowrap;
       gap: 16px;
-      /* Add vertical padding so glow/outline is NOT clipped by overflow */
-      padding: 12px 16px;
+      padding: 0 16px;
       align-items: center;
       overflow-x: scroll;
       overflow-y: hidden;
@@ -202,32 +147,25 @@
     .roulette::-webkit-scrollbar { display: none; }
     .item {
       /* slightly bigger gift cards */
-      position: relative;
       flex: 0 0 110px;
       width: 110px;
       background: linear-gradient(180deg, #1b2a40, #0f1a2b);
       border-radius: 16px;
       padding: 14px;
       text-align: center;
-      overflow: hidden;
       transition: transform 180ms ease, box-shadow 180ms ease;
-      will-change: transform;
+          --win-rgb: 74,163,255;
     }
-    .item.win {
+    
+    /* Rarity glow colors (used by .item.win) */
+    .item[data-rarity="common"] { --win-rgb: 160, 180, 210; }
+    .item[data-rarity="uncommon"] { --win-rgb: 80, 200, 120; }
+    .item[data-rarity="rare"] { --win-rgb: 74, 163, 255; }
+    .item[data-rarity="epic"] { --win-rgb: 186, 104, 255; }
+    .item[data-rarity="legendary"] { --win-rgb: 255, 186, 66; }
+.item.win {
       transform: translateY(-2px) scale(1.03);
-      box-shadow: 0 0 0 2px rgba(74,163,255,0.45), 0 0 12px rgba(74,163,255,0.28);
-    }
-    .item.win::after{
-      content:"";
-      position:absolute;
-      inset:0;
-      border-radius:inherit;
-      /* all the "nice" highlight is INSIDE the card (so it won't be clipped) */
-      box-shadow:
-        inset 0 0 0 1px rgba(255,255,255,0.06),
-        inset 0 0 0 2px rgba(74,163,255,0.55);
-      background: radial-gradient(circle at 50% 0%, rgba(74,163,255,0.22), rgba(74,163,255,0.06) 46%, rgba(0,0,0,0) 72%);
-      pointer-events:none;
+      box-shadow: 0 0 0 2px rgba(var(--win-rgb),0.35), 0 0 22px rgba(var(--win-rgb),0.25);
     }
     .item img { width: 70px; height: 70px; }
     .price {
@@ -732,7 +670,7 @@
 <body>
 <div class="app">
 <div class="header">
-<div class="brand"><div class="brand__name">archicasino</div><div class="online-badge" title="Сейчас онлайн"><span class="online-dot" aria-hidden="true"></span><span class="online-num" id="onlineCount">—</span></div></div>
+<div>archicasino</div>
 <div style="display:flex; gap:8px; align-items:center;">
 <div id="balanceBadge" style="font-weight:800;font-size:13px;background:#162235;padding:6px 10px;border-radius:999px;">⭐ …</div>
 <div id="topupBtn" style="font-weight:900;font-size:13px;background:#5b8ecb;padding:6px 10px;border-radius:999px;cursor:pointer;user-select:none;-webkit-user-select:none;">
@@ -900,6 +838,16 @@
 <div class="topup-pack" data-stars="100">100 ⭐<small>оптимально</small></div>
 <div class="topup-pack" data-stars="250">250 ⭐<small>выгодно</small></div>
 </div>
+<div class="topup-custom" style="margin-top:12px;">
+  <div style="font-weight:900;font-size:12px;opacity:.9;margin-bottom:6px;">Своя сумма</div>
+  <div style="display:flex;gap:10px;align-items:center;">
+    <input id="topupCustomInput" type="number" min="1" max="10000" step="1" inputmode="numeric"
+      placeholder="Например, 137"
+      style="flex:1;background:#0f1a2b;border:1px solid rgba(255,255,255,0.12);border-radius:14px;padding:12px 12px;color:#eaf1ff;font-weight:900;outline:none;" />
+    <div style="font-weight:900;opacity:.9;">⭐</div>
+  </div>
+  <div style="font-size:11px;opacity:.65;margin-top:6px;">Вводишь сумму — кнопка «Пополнить» оплатит её.</div>
+</div>
 <div class="topup-footer">
 <button class="btn topup-cancel" id="topupCancel">Отмена</button>
 <button class="btn topup-buy" disabled="" id="topupBuy">Пополнить</button>
@@ -923,132 +871,16 @@ window.addEventListener('error', (ev) => {
     const roulette = document.getElementById('roulette');
     const balanceBadge = document.getElementById('balanceBadge');
 
-    
-
-const onlineCountEl = document.getElementById('onlineCount');
-
-function getOrCreateSessionId() {
-  try {
-    const key = 'ac_online_sid_v1';
-    let sid = localStorage.getItem(key);
-    if (!sid) {
-      sid = (crypto?.randomUUID?.() || (Date.now().toString(16) + Math.random().toString(16).slice(2)));
-      localStorage.setItem(key, sid);
-    }
-    return sid;
-  } catch (_) {
-    return (Date.now().toString(16) + Math.random().toString(16).slice(2));
-  }
-}
-
-async function initOnlineIndicator() {
-  if (!onlineCountEl) return;
-
-  const sid = getOrCreateSessionId();
-
-  // Desired behavior:
-  // - updates rarely (every 10–20s)
-  // - changes only by 1–3 units
-  // - randomly goes up/down
-  // - still reflects real active users, but smoothed (also 1–3 per update)
-
-  const baseMin = 40, baseMax = 70;
-
-  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
-  const randInt = (a, b) => Math.floor(Math.random() * (b - a + 1)) + a;
-  const randStep = () => (Math.random() < 0.5 ? -1 : 1) * randInt(1, 3);
-  const randDelay = () => randInt(10_000, 20_000);
-
-  let base = Math.round((baseMin + baseMax) / 2);
-  let activeActual = 0;
-  let activeSmooth = 0;
-  let shown = base; // shown = base + activeSmooth (but we smooth the final number too)
-
-  async function ping() {
-    try {
-      await fetch(`${API_BASE}/online/ping`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session_id: sid }),
-      });
-    } catch (_) {}
-  }
-
-  async function fetchActive() {
-    try {
-      const r = await fetch(`${API_BASE}/online?window_sec=35`, { cache: 'no-store' });
-      const j = await r.json();
-      const n = Number(j?.online ?? 0);
-      if (Number.isFinite(n) && n >= 0) activeActual = n;
-    } catch (_) {}
-  }
-
-  function updateOnce() {
-    // 1) Random-walk base in [40..70] by +-1..3
-    base = clamp(base + randStep(), baseMin, baseMax);
-
-    // 2) Smooth activeActual -> activeSmooth by max 1..3 per update
-    const diffA = activeActual - activeSmooth;
-    if (diffA !== 0) {
-      const stepA = Math.min(Math.abs(diffA), randInt(1, 3));
-      activeSmooth += Math.sign(diffA) * stepA;
-    }
-
-    // 3) Desired total and final smoothing (so the number never jumps more than 1..3)
-    const desired = Math.round(base + activeSmooth);
-    const diff = desired - shown;
-    if (diff !== 0) {
-      const step = Math.min(Math.abs(diff), randInt(1, 3));
-      shown += Math.sign(diff) * step;
-    }
-
-    // Subtle "bump" animation on change
-    onlineCountEl.style.transform = 'translateY(-1px)';
-    onlineCountEl.style.opacity = '0.92';
-    requestAnimationFrame(() => {
-      onlineCountEl.style.transform = 'translateY(0px)';
-      onlineCountEl.style.opacity = '1';
-    });
-
-    onlineCountEl.textContent = String(shown);
-  }
-
-  // kick off
-  onlineCountEl.style.transition = 'transform 220ms ease, opacity 220ms ease';
-  ping();
-  fetchActive().finally(() => {
-    updateOnce();
-  });
-
-  // Keep sessions accurate (doesn't affect how often the number changes)
-  setInterval(ping, 10_000);
-
-  // Main loop: every 10–20s refresh active and apply a tiny random move
-  (function loop() {
-    setTimeout(async () => {
-      await fetchActive();
-      updateOnce();
-      loop();
-    }, randDelay());
-  })();
-}
-
-
-const topupBtn = document.getElementById('topupBtn');
+    const topupBtn = document.getElementById('topupBtn');
     const topupBackdrop = document.getElementById('topupBackdrop');
     const topupSheet = document.getElementById('topupSheet');
     const topupClose = document.getElementById('topupClose');
     const topupCancel = document.getElementById('topupCancel');
     const topupBuy = document.getElementById('topupBuy');
-    const topupStarsInput = document.getElementById('topupStarsInput');
-    const topupPromoInput = document.getElementById('topupPromoInput');
-    const topupPreviewBox = document.getElementById('topupPreviewBox');
-    const topupPayText = document.getElementById('topupPayText');
-    const topupBonusText = document.getElementById('topupBonusText');
-    const topupTotalText = document.getElementById('topupTotalText');
-    const topupPromoNote = document.getElementById('topupPromoNote');
+    const topupCustomInput = document.getElementById('topupCustomInput');
+    const topupPacks = Array.from(document.querySelectorAll('.topup-pack[data-stars]'));
+    let selectedTopupStars = null;
     let topupInFlight = false;
-    let topupPreviewTimer = null;
 
     const screenRoulette = document.getElementById('screenRoulette');
     const screenInventory = document.getElementById('screenInventory');
@@ -1432,6 +1264,7 @@ const topupBtn = document.getElementById('topupBtn');
     item.className = 'item';
     item.dataset.id = String(p.id);
 
+    item.dataset.rarity = String((p && p.rarity) ? p.rarity : 'common');
     const img = document.createElement('img');
     img.src = (p.icon_url || '').trim() || giftImageById(p.id);
     img.alt = 'prize';
@@ -1900,21 +1733,18 @@ function fmtHHMMSS(sec) {
     
 
         // ===== Topup =====
-    
-function openTopup() {
-  if (topupStarsInput) topupStarsInput.value = '';
-  if (topupPromoInput) topupPromoInput.value = '';
-  if (topupPreviewBox) topupPreviewBox.style.display = 'none';
-  if (topupBuy) topupBuy.disabled = true;
+    function openTopup() {
+      selectedTopupStars = null;
+      if (topupCustomInput) topupCustomInput.value = '';
+      topupPacks.forEach(p => p.style.boxShadow = '');
+      if (topupBuy) topupBuy.disabled = true;
 
-  topupBackdrop.style.display = 'block';
-  topupSheet.style.display = 'block';
-  try { tg?.HapticFeedback?.selectionChanged(); } catch (_) {}
+      topupBackdrop.style.display = 'block';
+      topupSheet.style.display = 'block';
+      try { tg?.HapticFeedback?.selectionChanged(); } catch (_) {}
+    }
 
-  scheduleTopupPreview();
-}
-
-function closeTopup() {
+    function closeTopup() {
       if (topupInFlight) return;
       topupBackdrop.style.display = 'none';
       topupSheet.style.display = 'none';
@@ -1948,32 +1778,27 @@ function closeTopup() {
       window.open(link, "_blank");
     }
 
-    
-async function doTopup() {
-  if (topupInFlight) return;
-  const stars = parseInt((topupStarsInput?.value || '').trim(), 10) || 0;
-  const promo_code = (topupPromoInput?.value || '').trim();
-  if (stars < 1 || stars > 10000) return;
+    async function doTopup(stars) {
+      if (topupInFlight) return;
+      topupInFlight = true;
+      if (topupBuy) topupBuy.disabled = true;
 
-  topupInFlight = true;
-  if (topupBuy) topupBuy.disabled = true;
+      try {
+        const res = await apiPost('/topup/create', { initData: tg?.initData || '', stars });
+        const link = res?.invoice_link;
+        if (!link) throw new Error('Сервер не вернул invoice_link. Проверь BOT_TOKEN на бэкенде.');
 
-  try {
-    const res = await apiPost('/topup/create', { initData: tg?.initData || '', stars, promo_code });
-    const link = res?.invoice_link;
-    if (!link) throw new Error('Сервер не вернул invoice_link. Проверь BOT_TOKEN на бэкенде.');
+        openInvoiceSmart(link);
+        closeTopup();
+      } catch (e) {
+        alert('Ошибка пополнения: ' + (e?.message || e));
+      } finally {
+        topupInFlight = false;
+        if (topupBuy) topupBuy.disabled = !(selectedTopupStars > 0);
+      }
+    }
 
-    openInvoiceSmart(link);
-    closeTopup();
-  } catch (e) {
-    alert('Ошибка пополнения: ' + (e?.message || e));
-  } finally {
-    topupInFlight = false;
-    scheduleTopupPreview();
-  }
-}
-
-topupBtn?.addEventListener('click', openTopup);
+    topupBtn?.addEventListener('click', openTopup);
     topupBtn?.addEventListener('touchend', (e) => { e.preventDefault(); openTopup(); }, { passive: false });
 
     topupClose?.addEventListener('click', closeTopup);
@@ -1984,70 +1809,41 @@ topupBtn?.addEventListener('click', openTopup);
 
     topupBackdrop.onclick = (e) => { try { e.preventDefault(); } catch (_) {} closeTopup(); };
 
-        // live preview
-        function scheduleTopupPreview() {
-          if (!topupSheet || topupSheet.style.display === 'none') return;
-          if (topupPreviewTimer) clearTimeout(topupPreviewTimer);
-          topupPreviewTimer = setTimeout(updateTopupPreview, 250);
-        }
+    topupPacks.forEach(p => {
+      const pick = () => {
+        if (topupInFlight) return;
+        topupPacks.forEach(x => x.style.boxShadow = '');
+        p.style.boxShadow = 'inset 0 0 0 2px rgba(74,163,255,0.55)';
+        selectedTopupStars = parseInt(p.dataset.stars, 10) || null;
+        if (topupCustomInput) topupCustomInput.value = '';
+        if (topupBuy) topupBuy.disabled = !(selectedTopupStars > 0);
+        try { tg?.HapticFeedback?.selectionChanged(); } catch (_) {}
+      };
+      p.addEventListener('click', pick);
+      p.addEventListener('touchend', (e) => { e.preventDefault(); pick(); }, { passive: false });
+    });
 
-        async function updateTopupPreview() {
-          if (topupInFlight) return;
-          const stars = parseInt((topupStarsInput?.value || '').trim(), 10) || 0;
-          const promo_code = (topupPromoInput?.value || '').trim();
-
-          if (!(stars >= 1 && stars <= 10000)) {
-            if (topupPreviewBox) topupPreviewBox.style.display = 'none';
-            if (topupBuy) topupBuy.disabled = true;
-            return;
-          }
-
-          try {
-            const res = await apiPost('/topup/preview', { initData: tg?.initData || '', stars, promo_code });
-            const pay = Number(res?.stars_to_pay ?? stars) || stars;
-            const bonus = Number(res?.bonus ?? 0) || 0;
-            const total = Number(res?.total_credit ?? (pay + bonus)) || (pay + bonus);
-
-            if (topupPayText) topupPayText.textContent = `⭐ ${pay}`;
-            if (topupBonusText) topupBonusText.textContent = bonus > 0 ? `+⭐ ${bonus}` : '—';
-            if (topupTotalText) topupTotalText.textContent = `⭐ ${total}`;
-
-            let note = '';
-            const p = res?.promo;
-            if (promo_code && p && p.applied) note = `Промокод ${p.code}: бонус +⭐ ${p.bonus}`;
-            else if (promo_code && p && !p.applied) {
-              const reason = p.reason || 'не подходит';
-              const map = {
-                not_found: 'не найден',
-                inactive: 'не активен',
-                not_started: 'ещё не начался',
-                expired: 'истёк',
-                limit_reached: 'лимит исчерпан',
-                already_used: 'уже использован',
-              };
-              note = `Промокод: ${map[reason] || reason}`;
-            }
-            if (topupPromoNote) topupPromoNote.textContent = note;
-            if (topupPreviewBox) topupPreviewBox.style.display = 'block';
-            if (topupBuy) topupBuy.disabled = false;
-          } catch (e) {
-            if (topupPromoNote) topupPromoNote.textContent = '';
-            if (topupPreviewBox) topupPreviewBox.style.display = 'none';
-            if (topupBuy) topupBuy.disabled = false;
-          }
-        }
-
-        if (topupStarsInput) {
-          topupStarsInput.addEventListener('input', scheduleTopupPreview);
-          topupStarsInput.addEventListener('change', scheduleTopupPreview);
-        }
-        if (topupPromoInput) {
-          topupPromoInput.addEventListener('input', scheduleTopupPreview);
-          topupPromoInput.addEventListener('change', scheduleTopupPreview);
-        }
-
-        topupBuy?.addEventListener('click', () => doTopup());
-    topupBuy?.addEventListener('touchend', (e) => { e.preventDefault(); doTopup(); }, { passive: false });
+    
+    // Custom amount input
+    topupCustomInput?.addEventListener('input', () => {
+      if (topupInFlight) return;
+      const raw = String(topupCustomInput.value || '').trim();
+      if (!raw) {
+        selectedTopupStars = null;
+        if (topupBuy) topupBuy.disabled = true;
+        return;
+      }
+      let v = parseInt(raw, 10);
+      if (!Number.isFinite(v)) v = 0;
+      v = Math.max(1, Math.min(10000, v));
+      // keep value clamped
+      if (String(v) !== raw) topupCustomInput.value = String(v);
+      topupPacks.forEach(x => x.style.boxShadow = '');
+      selectedTopupStars = v;
+      if (topupBuy) topupBuy.disabled = !(selectedTopupStars > 0);
+    });
+topupBuy?.addEventListener('click', () => selectedTopupStars && doTopup(selectedTopupStars));
+    topupBuy?.addEventListener('touchend', (e) => { e.preventDefault(); selectedTopupStars && doTopup(selectedTopupStars); }, { passive: false });
 
     // ===== Claim (prize) =====
     function openClaim(prize) {
@@ -2194,15 +1990,6 @@ topupBtn?.addEventListener('click', openTopup);
 
     function easeOutCubic(t) { return 1 - Math.pow(1 - t, 3); }
 
-    function getScrollLeftToCenter(el) {
-      const rRect = r.getBoundingClientRect();
-      const eRect = el.getBoundingClientRect();
-      const rCenter = rRect.left + rRect.width / 2;
-      const eCenter = eRect.left + eRect.width / 2;
-      const bias = parseFloat(getComputedStyle(r).getPropertyValue('--center-bias')) || 0;
-      return Math.round(r.scrollLeft + (eCenter - rCenter) + bias);
-    }
-
     async function spinToPrize(prize) {
       initInfiniteRoulette();
 
@@ -2232,7 +2019,7 @@ topupBtn?.addEventListener('click', openTopup);
       const target = pickForwardTarget(prize.id);
       if (!target) throw new Error('Не найден item для приза');
 
-      let to = getScrollLeftToCenter(target);
+      let to = (target.offsetLeft + target.clientWidth / 2) - (r.clientWidth / 2);
       let from = r.scrollLeft;
       const STOP_MS = 1600;
 
@@ -2292,7 +2079,6 @@ topupBtn?.addEventListener('click', openTopup);
     await refreshPrizes();
     initInfiniteRoulette();
     refreshBalance();
-    initOnlineIndicator();
     refreshRecentWins();
     setInterval(refreshRecentWins, 12000);
     refreshInventory();
