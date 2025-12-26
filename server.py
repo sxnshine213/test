@@ -2429,7 +2429,7 @@ def admin_list_prizes(request: Request):
         with con:
             with con.cursor() as cur:
                 cur.execute(
-                    "SELECT id, name, icon_url, cost, weight, gift_id, is_unique, is_active, sort_order, created_at "
+                    "SELECT id, name, icon_url, cost, weight, gift_id, is_unique, is_active, sort_order, created_at, COALESCE(rarity, 'common') "
                     "FROM prizes ORDER BY sort_order ASC, id ASC"
                 )
                 rows = cur.fetchall()
