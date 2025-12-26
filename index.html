@@ -969,7 +969,7 @@ async function initOnlineIndicator() {
       await fetch(`${API_BASE}/online/ping`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sid }),
+        body: JSON.stringify({ session_id: sid }),
       });
     } catch (_) {}
   }
@@ -978,7 +978,7 @@ async function initOnlineIndicator() {
     try {
       const r = await fetch(`${API_BASE}/online?window_sec=35`, { cache: 'no-store' });
       const j = await r.json();
-      const n = Number(j?.active ?? 0);
+      const n = Number(j?.online ?? 0);
       if (Number.isFinite(n) && n >= 0) activeActual = n;
     } catch (_) {}
   }
@@ -1040,9 +1040,15 @@ const topupBtn = document.getElementById('topupBtn');
     const topupClose = document.getElementById('topupClose');
     const topupCancel = document.getElementById('topupCancel');
     const topupBuy = document.getElementById('topupBuy');
-    const topupPacks = Array.from(document.querySelectorAll('.topup-pack[data-stars]'));
-    let selectedTopupStars = null;
+    const topupStarsInput = document.getElementById('topupStarsInput');
+    const topupPromoInput = document.getElementById('topupPromoInput');
+    const topupPreviewBox = document.getElementById('topupPreviewBox');
+    const topupPayText = document.getElementById('topupPayText');
+    const topupBonusText = document.getElementById('topupBonusText');
+    const topupTotalText = document.getElementById('topupTotalText');
+    const topupPromoNote = document.getElementById('topupPromoNote');
     let topupInFlight = false;
+    let topupPreviewTimer = null;
 
     const screenRoulette = document.getElementById('screenRoulette');
     const screenInventory = document.getElementById('screenInventory');
@@ -1894,17 +1900,21 @@ function fmtHHMMSS(sec) {
     
 
         // ===== Topup =====
-    function openTopup() {
-      selectedTopupStars = null;
-      topupPacks.forEach(p => p.style.boxShadow = '');
-      if (topupBuy) topupBuy.disabled = true;
+    
+function openTopup() {
+  if (topupStarsInput) topupStarsInput.value = '';
+  if (topupPromoInput) topupPromoInput.value = '';
+  if (topupPreviewBox) topupPreviewBox.style.display = 'none';
+  if (topupBuy) topupBuy.disabled = true;
 
-      topupBackdrop.style.display = 'block';
-      topupSheet.style.display = 'block';
-      try { tg?.HapticFeedback?.selectionChanged(); } catch (_) {}
-    }
+  topupBackdrop.style.display = 'block';
+  topupSheet.style.display = 'block';
+  try { tg?.HapticFeedback?.selectionChanged(); } catch (_) {}
 
-    function closeTopup() {
+  scheduleTopupPreview();
+}
+
+function closeTopup() {
       if (topupInFlight) return;
       topupBackdrop.style.display = 'none';
       topupSheet.style.display = 'none';
@@ -1938,27 +1948,32 @@ function fmtHHMMSS(sec) {
       window.open(link, "_blank");
     }
 
-    async function doTopup(stars) {
-      if (topupInFlight) return;
-      topupInFlight = true;
-      if (topupBuy) topupBuy.disabled = true;
+    
+async function doTopup() {
+  if (topupInFlight) return;
+  const stars = parseInt((topupStarsInput?.value || '').trim(), 10) || 0;
+  const promo_code = (topupPromoInput?.value || '').trim();
+  if (stars < 1 || stars > 10000) return;
 
-      try {
-        const res = await apiPost('/topup/create', { initData: tg?.initData || '', stars });
-        const link = res?.invoice_link;
-        if (!link) throw new Error('Сервер не вернул invoice_link. Проверь BOT_TOKEN на бэкенде.');
+  topupInFlight = true;
+  if (topupBuy) topupBuy.disabled = true;
 
-        openInvoiceSmart(link);
-        closeTopup();
-      } catch (e) {
-        alert('Ошибка пополнения: ' + (e?.message || e));
-      } finally {
-        topupInFlight = false;
-        if (topupBuy) topupBuy.disabled = !(selectedTopupStars > 0);
-      }
-    }
+  try {
+    const res = await apiPost('/topup/create', { initData: tg?.initData || '', stars, promo_code });
+    const link = res?.invoice_link;
+    if (!link) throw new Error('Сервер не вернул invoice_link. Проверь BOT_TOKEN на бэкенде.');
 
-    topupBtn?.addEventListener('click', openTopup);
+    openInvoiceSmart(link);
+    closeTopup();
+  } catch (e) {
+    alert('Ошибка пополнения: ' + (e?.message || e));
+  } finally {
+    topupInFlight = false;
+    scheduleTopupPreview();
+  }
+}
+
+topupBtn?.addEventListener('click', openTopup);
     topupBtn?.addEventListener('touchend', (e) => { e.preventDefault(); openTopup(); }, { passive: false });
 
     topupClose?.addEventListener('click', closeTopup);
@@ -1969,21 +1984,70 @@ function fmtHHMMSS(sec) {
 
     topupBackdrop.onclick = (e) => { try { e.preventDefault(); } catch (_) {} closeTopup(); };
 
-    topupPacks.forEach(p => {
-      const pick = () => {
-        if (topupInFlight) return;
-        topupPacks.forEach(x => x.style.boxShadow = '');
-        p.style.boxShadow = 'inset 0 0 0 2px rgba(74,163,255,0.55)';
-        selectedTopupStars = parseInt(p.dataset.stars, 10) || null;
-        if (topupBuy) topupBuy.disabled = !(selectedTopupStars > 0);
-        try { tg?.HapticFeedback?.selectionChanged(); } catch (_) {}
-      };
-      p.addEventListener('click', pick);
-      p.addEventListener('touchend', (e) => { e.preventDefault(); pick(); }, { passive: false });
-    });
+        // live preview
+        function scheduleTopupPreview() {
+          if (!topupSheet || topupSheet.style.display === 'none') return;
+          if (topupPreviewTimer) clearTimeout(topupPreviewTimer);
+          topupPreviewTimer = setTimeout(updateTopupPreview, 250);
+        }
 
-    topupBuy?.addEventListener('click', () => selectedTopupStars && doTopup(selectedTopupStars));
-    topupBuy?.addEventListener('touchend', (e) => { e.preventDefault(); selectedTopupStars && doTopup(selectedTopupStars); }, { passive: false });
+        async function updateTopupPreview() {
+          if (topupInFlight) return;
+          const stars = parseInt((topupStarsInput?.value || '').trim(), 10) || 0;
+          const promo_code = (topupPromoInput?.value || '').trim();
+
+          if (!(stars >= 1 && stars <= 10000)) {
+            if (topupPreviewBox) topupPreviewBox.style.display = 'none';
+            if (topupBuy) topupBuy.disabled = true;
+            return;
+          }
+
+          try {
+            const res = await apiPost('/topup/preview', { initData: tg?.initData || '', stars, promo_code });
+            const pay = Number(res?.stars_to_pay ?? stars) || stars;
+            const bonus = Number(res?.bonus ?? 0) || 0;
+            const total = Number(res?.total_credit ?? (pay + bonus)) || (pay + bonus);
+
+            if (topupPayText) topupPayText.textContent = `⭐ ${pay}`;
+            if (topupBonusText) topupBonusText.textContent = bonus > 0 ? `+⭐ ${bonus}` : '—';
+            if (topupTotalText) topupTotalText.textContent = `⭐ ${total}`;
+
+            let note = '';
+            const p = res?.promo;
+            if (promo_code && p && p.applied) note = `Промокод ${p.code}: бонус +⭐ ${p.bonus}`;
+            else if (promo_code && p && !p.applied) {
+              const reason = p.reason || 'не подходит';
+              const map = {
+                not_found: 'не найден',
+                inactive: 'не активен',
+                not_started: 'ещё не начался',
+                expired: 'истёк',
+                limit_reached: 'лимит исчерпан',
+                already_used: 'уже использован',
+              };
+              note = `Промокод: ${map[reason] || reason}`;
+            }
+            if (topupPromoNote) topupPromoNote.textContent = note;
+            if (topupPreviewBox) topupPreviewBox.style.display = 'block';
+            if (topupBuy) topupBuy.disabled = false;
+          } catch (e) {
+            if (topupPromoNote) topupPromoNote.textContent = '';
+            if (topupPreviewBox) topupPreviewBox.style.display = 'none';
+            if (topupBuy) topupBuy.disabled = false;
+          }
+        }
+
+        if (topupStarsInput) {
+          topupStarsInput.addEventListener('input', scheduleTopupPreview);
+          topupStarsInput.addEventListener('change', scheduleTopupPreview);
+        }
+        if (topupPromoInput) {
+          topupPromoInput.addEventListener('input', scheduleTopupPreview);
+          topupPromoInput.addEventListener('change', scheduleTopupPreview);
+        }
+
+        topupBuy?.addEventListener('click', () => doTopup());
+    topupBuy?.addEventListener('touchend', (e) => { e.preventDefault(); doTopup(); }, { passive: false });
 
     // ===== Claim (prize) =====
     function openClaim(prize) {

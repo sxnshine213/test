@@ -114,13 +114,6 @@
       <input id="prizeIconUrl" placeholder="Icon URL (https://.../icon.png)" style="min-width:260px;flex:3"/>
       <input id="prizeCost" placeholder="cost" style="width:120px"/>
       <input id="prizeWeight" placeholder="weight" style="width:120px"/>
-      <select id="prizeRarity" style="width:150px;">
-        <option value="common">common</option>
-        <option value="uncommon">uncommon</option>
-        <option value="rare">rare</option>
-        <option value="epic">epic</option>
-        <option value="legendary">legendary</option>
-      </select>
       <input id="prizeSort" placeholder="sort" style="width:120px"/>
       <input id="prizeGiftId" placeholder="gift_id (Telegram)" style="min-width:180px;flex:2"/>
       <label class="muted" style="display:flex;align-items:center;gap:8px;">
@@ -181,6 +174,61 @@
 
 
 
+
+  <div class="card">
+    <div class="row" style="justify-content:space-between;">
+      <div style="font-weight:900;">🏷️ Промокоды</div>
+      <div id="promosStatus" class="muted"></div>
+    </div>
+
+    <div class="row" style="margin-top:10px;gap:10px;flex-wrap:wrap;align-items:flex-end;">
+      <div style="display:flex;flex-direction:column;gap:6px;">
+        <div class="muted" style="font-size:12px;">CODE</div>
+        <input id="promoCode" placeholder="WELCOME" style="min-width:160px;" />
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:6px;">
+        <div class="muted" style="font-size:12px;">bonus %</div>
+        <input id="promoBonusPercent" type="number" min="0" max="1000" value="0" style="width:110px;" />
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:6px;">
+        <div class="muted" style="font-size:12px;">bonus flat ⭐</div>
+        <input id="promoBonusFlat" type="number" min="0" max="100000" value="0" style="width:130px;" />
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:6px;">
+        <div class="muted" style="font-size:12px;">max uses</div>
+        <input id="promoMaxUses" type="number" min="0" placeholder="пусто = ∞" style="width:130px;" />
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:6px;">
+        <div class="muted" style="font-size:12px;">valid from</div>
+        <input id="promoValidFrom" type="datetime-local" style="width:190px;" />
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:6px;">
+        <div class="muted" style="font-size:12px;">valid to</div>
+        <input id="promoValidTo" type="datetime-local" style="width:190px;" />
+      </div>
+
+      <label class="muted" style="display:flex;gap:8px;align-items:center;margin-bottom:2px;">
+        active <input id="promoIsActive" type="checkbox" checked />
+      </label>
+
+      <button id="createPromo">Создать/обновить</button>
+      <button class="secondary" id="loadPromos">Обновить</button>
+      <button class="secondary" id="exportPromos">Экспорт</button>
+    </div>
+
+    <div id="promosBox" style="margin-top:10px;"></div>
+
+    <div class="muted" style="margin-top:8px;font-size:12px;">
+      Промокоды (вариант A): дают бонус сверху к пополнению и не меняют сумму оплаты.
+    </div>
+  </div>
+
+
   <div class="card">
     <div class="row" style="justify-content:space-between;">
       <div style="font-weight:900;">💳 Topups</div>
@@ -211,13 +259,25 @@
   const userTables = document.getElementById('userTables');
 
   const topupsBox = document.getElementById('topupsBox');
+  const promosBox = document.getElementById('promosBox');
+  const promosStatus = document.getElementById('promosStatus');
+  const promoCodeEl = document.getElementById('promoCode');
+  const promoBonusPercentEl = document.getElementById('promoBonusPercent');
+  const promoBonusFlatEl = document.getElementById('promoBonusFlat');
+  const promoMaxUsesEl = document.getElementById('promoMaxUses');
+  const promoValidFromEl = document.getElementById('promoValidFrom');
+  const promoValidToEl = document.getElementById('promoValidTo');
+  const promoIsActiveEl = document.getElementById('promoIsActive');
+  const loadPromosBtn = document.getElementById('loadPromos');
+  const createPromoBtn = document.getElementById('createPromo');
+  const exportPromosBtn = document.getElementById('exportPromos');
+
   const prizesBox = document.getElementById('prizesBox');
   const prizesStatus = document.getElementById('prizesStatus');
   const prizeNameEl = document.getElementById('prizeName');
   const prizeIconUrlEl = document.getElementById('prizeIconUrl');
   const prizeCostEl = document.getElementById('prizeCost');
   const prizeWeightEl = document.getElementById('prizeWeight');
-  const prizeRarityEl = document.getElementById('prizeRarity');
   const prizeSortEl = document.getElementById('prizeSort');
 
   const prizeGiftIdEl = document.getElementById('prizeGiftId');
@@ -550,19 +610,6 @@ function prizeRow(p) {
   weight.style.width = '90px';
   tdWeight.appendChild(weight);
 
-  const tdRarity = document.createElement('td');
-  const rarity = document.createElement('select');
-  rarity.innerHTML = `
-    <option value="common">common</option>
-    <option value="uncommon">uncommon</option>
-    <option value="rare">rare</option>
-    <option value="epic">epic</option>
-    <option value="legendary">legendary</option>
-  `;
-  rarity.value = (p.rarity || 'common');
-  rarity.style.width = '120px';
-  tdRarity.appendChild(rarity);
-
   const tdGiftId = document.createElement('td');
   const giftId = document.createElement('input');
   giftId.value = p.gift_id || '';
@@ -608,7 +655,6 @@ function prizeRow(p) {
     icon_url: (icon.value || '').trim() || null,
     cost: parseInt(cost.value, 10) || 0,
     weight: parseInt(weight.value, 10) || 0,
-    rarity: (rarity.value || 'common'),
     gift_id: (giftId.value || '').trim() || null,
     is_unique: !!unique.checked,
     is_active: !!active.checked,
@@ -623,7 +669,6 @@ function prizeRow(p) {
   };
 
   [name, icon, cost, weight, giftId, sort].forEach(el => el.addEventListener('input', onChange));
-  rarity.addEventListener('change', onChange);
   [unique, active].forEach(el => el.addEventListener('change', onChange));
 
   btnSave.onclick = async () => {
@@ -662,7 +707,6 @@ function prizeRow(p) {
   tr.appendChild(tdIcon);
   tr.appendChild(tdCost);
   tr.appendChild(tdWeight);
-  tr.appendChild(tdRarity);
   tr.appendChild(tdGiftId);
   tr.appendChild(tdUnique);
   tr.appendChild(tdSort);
@@ -689,7 +733,7 @@ function renderPrizes(){
 
   const table = document.createElement('table');
   const thead = document.createElement('thead');
-  thead.innerHTML = '<tr><th>id</th><th></th><th>name</th><th>icon_url</th><th>cost</th><th>weight</th><th>rarity</th><th>gift_id</th><th>unique</th><th>sort</th><th>active</th><th>created</th><th>actions</th></tr>';
+  thead.innerHTML = '<tr><th>id</th><th></th><th>name</th><th>icon_url</th><th>cost</th><th>weight</th><th>gift_id</th><th>unique</th><th>sort</th><th>active</th><th>created</th><th>actions</th></tr>';
   table.appendChild(thead);
 
   const tbody = document.createElement('tbody');
@@ -724,7 +768,6 @@ async function createPrize() {
   const sort = parseInt((prizeSortEl?.value || '').trim(), 10);
   const is_active = !!prizeActiveEl?.checked;
   const icon_url = (prizeIconUrlEl?.value || '').trim() || null;
-  const rarity = (prizeRarityEl?.value || 'common');
 
   const gift_id = (prizeGiftIdEl?.value || '').trim() || null;
   const is_unique = !!prizeUniqueEl?.checked;
@@ -742,7 +785,6 @@ async function createPrize() {
         name,
         cost,
         weight,
-        rarity,
         gift_id,
         is_unique,
         is_active,
@@ -755,7 +797,6 @@ async function createPrize() {
     if (prizeIconUrlEl) prizeIconUrlEl.value = '';
     if (prizeCostEl) prizeCostEl.value = '';
     if (prizeWeightEl) prizeWeightEl.value = '';
-    if (prizeRarityEl) prizeRarityEl.value = 'common';
     if (prizeSortEl) prizeSortEl.value = '';
     if (prizeGiftIdEl) prizeGiftIdEl.value = '';
     if (prizeUniqueEl) prizeUniqueEl.checked = false;
@@ -816,7 +857,6 @@ async function applyImportPrizes(){
         icon_url: (String(it.icon_url ?? '')).trim() || null,
         cost: parseInt(it.cost ?? 0, 10) || 0,
         weight: parseInt(it.weight ?? 0, 10) || 0,
-        rarity: String(it.rarity ?? 'common') || 'common',
         gift_id: String(it.gift_id ?? '').trim() || null,
         is_unique: !!it.is_unique,
         is_active: it.is_active === undefined ? true : !!it.is_active,
@@ -850,6 +890,195 @@ toggleImportPrizesBtn?.addEventListener('click', toggleImportPrizes);
 cancelImportPrizesBtn?.addEventListener('click', () => { importPrizesWrap.style.display='none'; });
 applyImportPrizesBtn?.addEventListener('click', applyImportPrizes);
 
+
+  // ===== Promo codes (Topups bonuses) =====
+  let promosCache = [];
+
+  function _pad2(n){ return String(n).padStart(2,'0'); }
+
+  function tsToLocalInput(ts){
+    if (ts == null) return '';
+    const d = new Date(Number(ts) * 1000);
+    if (Number.isNaN(d.getTime())) return '';
+    const yyyy = d.getFullYear();
+    const mm = _pad2(d.getMonth()+1);
+    const dd = _pad2(d.getDate());
+    const hh = _pad2(d.getHours());
+    const mi = _pad2(d.getMinutes());
+    return `${yyyy}-${mm}-${dd}T${hh}:${mi}`;
+  }
+
+  function localInputToTs(v){
+    const s = String(v || '').trim();
+    if (!s) return null;
+    const d = new Date(s);
+    const t = d.getTime();
+    if (!Number.isFinite(t)) return null;
+    return Math.floor(t / 1000);
+  }
+
+  function promoRow(p){
+    const tr = document.createElement('tr');
+
+    const code = String(p.code || '').trim();
+    const bp = Number(p.bonus_percent || 0);
+    const bf = Number(p.bonus_flat || 0);
+    const mu = (p.max_uses == null ? '' : String(p.max_uses));
+    const used = Number(p.used_count || 0);
+    const vf = tsToLocalInput(p.valid_from);
+    const vt = tsToLocalInput(p.valid_to);
+    const active = !!p.is_active;
+
+    const tdCode = document.createElement('td');
+    tdCode.innerHTML = `<span class="pill">${code || '?'}</span>`;
+    const tdBP = document.createElement('td');
+    const inBP = document.createElement('input'); inBP.type='number'; inBP.min='0'; inBP.max='1000'; inBP.value=String(bp); inBP.style.width='90px'; tdBP.appendChild(inBP);
+
+    const tdBF = document.createElement('td');
+    const inBF = document.createElement('input'); inBF.type='number'; inBF.min='0'; inBF.max='100000'; inBF.value=String(bf); inBF.style.width='110px'; tdBF.appendChild(inBF);
+
+    const tdMU = document.createElement('td');
+    const inMU = document.createElement('input'); inMU.type='number'; inMU.min='0'; inMU.placeholder='∞'; inMU.value=mu; inMU.style.width='90px'; tdMU.appendChild(inMU);
+
+    const tdUsed = document.createElement('td'); tdUsed.textContent = String(used);
+
+    const tdVF = document.createElement('td');
+    const inVF = document.createElement('input'); inVF.type='datetime-local'; inVF.value=vf; inVF.style.width='175px'; tdVF.appendChild(inVF);
+
+    const tdVT = document.createElement('td');
+    const inVT = document.createElement('input'); inVT.type='datetime-local'; inVT.value=vt; inVT.style.width='175px'; tdVT.appendChild(inVT);
+
+    const tdAct = document.createElement('td');
+    const inAct = document.createElement('input'); inAct.type='checkbox'; inAct.checked=active; tdAct.appendChild(inAct);
+
+    const tdCreated = document.createElement('td');
+    tdCreated.textContent = p.created_at ? fmtTime(p.created_at) : '';
+
+    const tdActions = document.createElement('td');
+    const btnSave = document.createElement('button'); btnSave.textContent='Save';
+    const btnDel = document.createElement('button'); btnDel.textContent='Delete'; btnDel.className='secondary';
+
+    btnSave.onclick = async () => {
+      if (!code) return;
+      promosStatus.textContent = 'сохранение...';
+      try{
+        const body = {
+          code,
+          bonus_percent: parseInt(inBP.value || '0', 10) || 0,
+          bonus_flat: parseInt(inBF.value || '0', 10) || 0,
+          max_uses: (String(inMU.value||'').trim()==='' ? null : (parseInt(inMU.value,10) || 0)),
+          is_active: !!inAct.checked,
+          valid_from: localInputToTs(inVF.value),
+          valid_to: localInputToTs(inVT.value),
+        };
+        await api('/admin/promocodes/' + encodeURIComponent(code), { method:'PUT', body: JSON.stringify(body) });
+        promosStatus.innerHTML = '<span class="ok">OK</span>';
+        await loadPromos();
+      }catch(e){
+        promosStatus.innerHTML = `<span class="bad">ERR</span> • ${e.message}`;
+      }
+    };
+
+    btnDel.onclick = async () => {
+      if (!code) return;
+      if (!confirm('Удалить промокод ' + code + '?')) return;
+      promosStatus.textContent = 'удаление...';
+      try{
+        await api('/admin/promocodes/' + encodeURIComponent(code), { method:'DELETE' });
+        promosStatus.innerHTML = '<span class="ok">OK</span>';
+        await loadPromos();
+      }catch(e){
+        promosStatus.innerHTML = `<span class="bad">ERR</span> • ${e.message}`;
+      }
+    };
+
+    tdActions.appendChild(btnSave);
+    tdActions.appendChild(btnDel);
+
+    tr.appendChild(tdCode);
+    tr.appendChild(tdBP);
+    tr.appendChild(tdBF);
+    tr.appendChild(tdMU);
+    tr.appendChild(tdUsed);
+    tr.appendChild(tdVF);
+    tr.appendChild(tdVT);
+    tr.appendChild(tdAct);
+    tr.appendChild(tdCreated);
+    tr.appendChild(tdActions);
+    return tr;
+  }
+
+  function renderPromos(){
+    if (!promosBox) return;
+    promosBox.innerHTML = '';
+
+    const items = Array.isArray(promosCache) ? promosCache : [];
+    const table = document.createElement('table');
+    const thead = document.createElement('thead');
+    thead.innerHTML = '<tr><th>code</th><th>%</th><th>flat</th><th>max</th><th>used</th><th>from</th><th>to</th><th>active</th><th>created</th><th>actions</th></tr>';
+    table.appendChild(thead);
+
+    const tbody = document.createElement('tbody');
+    items.forEach(p => tbody.appendChild(promoRow(p)));
+    table.appendChild(tbody);
+
+    promosBox.appendChild(table);
+    promosStatus.innerHTML = `<span class="ok">OK</span> • ${items.length}`;
+  }
+
+  async function loadPromos(){
+    if (!promosBox) return;
+    promosStatus.textContent = 'загрузка...';
+    promosBox.innerHTML = '';
+    try{
+      const d = await api('/admin/promocodes');
+      promosCache = d.items || [];
+      renderPromos();
+    }catch(e){
+      promosStatus.innerHTML = `<span class="bad">ERR</span> • ${e.message}`;
+    }
+  }
+
+  async function createPromo(){
+    const code = (promoCodeEl?.value || '').trim();
+    if (!code){ promosStatus.innerHTML = '<span class="bad">ERR</span> • code required'; return; }
+
+    promosStatus.textContent = 'создание...';
+    try{
+      const body = {
+        code,
+        bonus_percent: parseInt((promoBonusPercentEl?.value || '0'), 10) || 0,
+        bonus_flat: parseInt((promoBonusFlatEl?.value || '0'), 10) || 0,
+        max_uses: (String(promoMaxUsesEl?.value||'').trim()==='' ? null : (parseInt(promoMaxUsesEl.value,10) || 0)),
+        is_active: !!promoIsActiveEl?.checked,
+        valid_from: localInputToTs(promoValidFromEl?.value),
+        valid_to: localInputToTs(promoValidToEl?.value),
+      };
+      await api('/admin/promocodes', { method:'POST', body: JSON.stringify(body) });
+      promosStatus.innerHTML = '<span class="ok">OK</span>';
+      // reset only code
+      promoCodeEl.value = '';
+      await loadPromos();
+    }catch(e){
+      promosStatus.innerHTML = `<span class="bad">ERR</span> • ${e.message}`;
+    }
+  }
+
+  function exportPromos(){
+    try{
+      const blob = new Blob([JSON.stringify(promosCache || [], null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'promocodes.json';
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 500);
+    }catch(e){
+      alert('Export error: ' + (e?.message || e));
+    }
+  }
+
+
 async function loadTopups() {
 
     topupsBox.innerHTML = '<div class="muted">загрузка...</div>';
@@ -874,6 +1103,9 @@ async function loadTopups() {
   document.getElementById('loadUser').onclick = loadUser;
   document.getElementById('applyDelta').onclick = applyDelta;
   document.getElementById('loadTopups').onclick = loadTopups;
+  loadPromosBtn && (loadPromosBtn.onclick = loadPromos);
+  createPromoBtn && (createPromoBtn.onclick = createPromo);
+  exportPromosBtn && (exportPromosBtn.onclick = exportPromos);
 
   loadUiBtn && (loadUiBtn.onclick = loadUiSettings);
   saveUiBtn && (saveUiBtn.onclick = saveUiSettings);
@@ -881,6 +1113,7 @@ async function loadTopups() {
   loadCfg();
   loadStats();
   loadTopups();
+  loadPromos();
   loadUiSettings();
 
   document.getElementById('loadPrizes')?.addEventListener('click', loadPrizes);
