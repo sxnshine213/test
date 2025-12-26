@@ -157,6 +157,7 @@ class PrizeIn(BaseModel):
     icon_url: Optional[str] = None
     cost: int
     weight: int
+    rarity: Literal["common","uncommon","rare","epic","legendary","mythic"] = "common"
     # Telegram Gift id for regular gifts (used by sendGift)
     gift_id: Optional[str] = None
     # Unique gifts are handled via admin claims (manual fulfillment)
@@ -228,6 +229,7 @@ def init_db():
                 )
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_prizes_active_sort ON prizes(is_active, sort_order, id)")
                 cur.execute("ALTER TABLE prizes ADD COLUMN IF NOT EXISTS icon_url TEXT")
+                cur.execute("ALTER TABLE prizes ADD COLUMN IF NOT EXISTS rarity TEXT NOT NULL DEFAULT \'common\'")
 
                 # spins / inventory / topups
                 cur.execute(
@@ -888,12 +890,20 @@ def get_or_create_user(cur, tg_user_id: str, public: Optional[dict] = None) -> i
 
 def fetch_active_prizes(cur) -> list[dict]:
     cur.execute(
-        "SELECT id, name, icon_url, cost, weight FROM prizes "
+        "SELECT id, name, icon_url, cost, weight, COALESCE(rarity,'common') "
+        "FROM prizes "
         "WHERE is_active = TRUE AND weight > 0 "
         "ORDER BY sort_order ASC, id ASC"
     )
     rows = cur.fetchall()
-    return [{"id": int(r[0]), "name": str(r[1]), "icon_url": (str(r[2]).strip() if r[2] is not None else None), "cost": int(r[3]), "weight": int(r[4])} for r in rows]
+    return [{
+        "id": int(r[0]),
+        "name": str(r[1]),
+        "icon_url": (str(r[2]).strip() if r[2] is not None else None),
+        "cost": int(r[3]),
+        "weight": int(r[4]),
+        "rarity": str((r[5] or "common")).lower(),
+    } for r in rows]
 
 
 def fetch_active_cases(cur) -> list[dict]:
@@ -916,7 +926,7 @@ def fetch_active_cases(cur) -> list[dict]:
 
 def fetch_case_prizes(cur, case_id: int) -> list[dict]:
     cur.execute(
-        "SELECT p.id, p.name, p.icon_url, p.cost, cp.weight "
+        "SELECT p.id, p.name, p.icon_url, p.cost, cp.weight, COALESCE(p.rarity,'common') "
         "FROM case_prizes cp "
         "JOIN prizes p ON p.id = cp.prize_id "
         "WHERE cp.case_id=%s AND cp.is_active=TRUE AND p.is_active=TRUE AND cp.weight > 0 "
@@ -930,6 +940,7 @@ def fetch_case_prizes(cur, case_id: int) -> list[dict]:
         "icon_url": ((r[2] or '').strip() or None),
         "cost": int(r[3]),
         "weight": int(r[4]),
+        "rarity": str((r[5] or "common")).lower(),
     } for r in rows]
 
 
@@ -1228,7 +1239,7 @@ def spin(req: SpinReq):
                     prizes = fetch_active_prizes(cur)
                 if not prizes:
                     # fallback (если таблица пуста/всё отключено)
-                    prizes = [{"id": p["id"], "name": p["name"], "icon_url": (p.get("icon_url") or None), "cost": p["cost"], "weight": p["weight"]} for p in DEFAULT_PRIZES]
+                    prizes = [{"id": p["id"], "name": p["name"], "icon_url": (p.get("icon_url") or None), "cost": p["cost"], "weight": p["weight"], "rarity": (p.get("rarity") or 'common')} for p in DEFAULT_PRIZES]
 
                 prize = random.choices(prizes, weights=[p["weight"] for p in prizes], k=1)[0]
 
@@ -1255,6 +1266,7 @@ def spin(req: SpinReq):
         "name": str(prize["name"]),
         "icon_url": ((prize.get("icon_url") or "").strip() or None),
         "cost": int(prize["cost"]),
+        "rarity": str((prize.get("rarity") or "common")).lower(),
         "balance": int(new_balance),
         "case_id": int(case_id) if case_id > 0 else None,
         "case_name": case_name,
@@ -2158,7 +2170,7 @@ def admin_list_prizes(request: Request):
         with con:
             with con.cursor() as cur:
                 cur.execute(
-                    "SELECT id, name, icon_url, cost, weight, gift_id, is_unique, is_active, sort_order, created_at "
+                    "SELECT id, name, icon_url, cost, weight, COALESCE(rarity,'common') AS rarity, gift_id, is_unique, is_active, sort_order, created_at "
                     "FROM prizes ORDER BY sort_order ASC, id ASC"
                 )
                 rows = cur.fetchall()
@@ -2170,11 +2182,12 @@ def admin_list_prizes(request: Request):
             "icon_url": ((r[2] or "").strip() or None),
             "cost": int(r[3]),
             "weight": int(r[4]),
-            "gift_id": (str(r[5]) if r[5] is not None and str(r[5]).strip() else None),
-            "is_unique": bool(r[6]),
-            "is_active": bool(r[7]),
-            "sort_order": int(r[8]),
-            "created_at": int(r[9]),
+            "rarity": str((r[5] or "common")).lower(),
+            "gift_id": (str(r[6]) if r[6] is not None and str(r[6]).strip() else None),
+            "is_unique": bool(r[7]),
+            "is_active": bool(r[8]),
+            "sort_order": int(r[9]),
+            "created_at": int(r[10]),
         })
     return {"items": items}
 
@@ -2191,14 +2204,15 @@ def admin_create_prize(request: Request, req: PrizeIn):
                 new_id = int(cur.fetchone()[0])
 
                 cur.execute(
-                    "INSERT INTO prizes (id, name, icon_url, cost, weight, gift_id, is_unique, is_active, sort_order, created_at) "
-                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                    "INSERT INTO prizes (id, name, icon_url, cost, weight, rarity, gift_id, is_unique, is_active, sort_order, created_at) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                     (
                         new_id,
                         req.name,
                         (req.icon_url or None),
                         int(req.cost),
                         int(req.weight),
+                        str((req.rarity or 'common')).lower(),
                         (req.gift_id or None),
                         bool(req.is_unique),
                         bool(req.is_active),
@@ -2216,7 +2230,7 @@ def admin_update_prize(request: Request, prize_id: int, req: PrizeIn):
         with con:
             with con.cursor() as cur:
                 cur.execute(
-                    "UPDATE prizes SET name=%s, icon_url=%s, cost=%s, weight=%s, gift_id=%s, is_unique=%s, "
+                    "UPDATE prizes SET name=%s, icon_url=%s, cost=%s, weight=%s, rarity=%s, gift_id=%s, is_unique=%s, "
                     "is_active=%s, sort_order=%s "
                     "WHERE id=%s RETURNING created_at",
                     (
@@ -2224,6 +2238,7 @@ def admin_update_prize(request: Request, prize_id: int, req: PrizeIn):
                         (req.icon_url or None),
                         int(req.cost),
                         int(req.weight),
+                        str((req.rarity or 'common')).lower(),
                         (req.gift_id or None),
                         bool(req.is_unique),
                         bool(req.is_active),
