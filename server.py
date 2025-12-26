@@ -147,11 +147,6 @@ class LeaderboardReq(WithInitData):
     limit: int = 30
 
 
-
-
-class OnlinePingReq(BaseModel):
-    session_id: str
-
 class AdminAdjustReq(BaseModel):
     tg_user_id: str
     delta: int
@@ -340,20 +335,7 @@ def init_db():
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_inv_user_time ON inventory(tg_user_id, created_at)")
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_topups_user_time ON topups(tg_user_id, created_at)")
 
-                
-
-# online sessions (for "online" indicator)
-cur.execute(
-    """
-    CREATE TABLE IF NOT EXISTS online_sessions (
-      session_id TEXT PRIMARY KEY,
-      last_seen BIGINT NOT NULL
-    )
-    """
-)
-cur.execute("CREATE INDEX IF NOT EXISTS idx_online_sessions_last_seen ON online_sessions(last_seen)")
-
-# seed prizes if empty
+                # seed prizes if empty
                 
                 # ===== Lottery tables =====
                 cur.execute(
@@ -385,7 +367,7 @@ cur.execute("CREATE INDEX IF NOT EXISTS idx_online_sessions_last_seen ON online_
                     )
                     """
                 )
-                                # Ensure columns exist even if table was created by older deploys
+                # Ensure columns exist even if table was created by older deploys
                 cur.execute("ALTER TABLE lottery_entries ADD COLUMN IF NOT EXISTS start_no BIGINT")
                 cur.execute("ALTER TABLE lottery_entries ADD COLUMN IF NOT EXISTS end_no BIGINT")
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_lottery_entries_hour_user ON lottery_entries(hour_start, tg_user_id)")
@@ -506,40 +488,6 @@ def require_admin(request: Request):
     if not got or not hmac.compare_digest(got, ADMIN_KEY):
         raise HTTPException(status_code=401, detail="admin unauthorized")
 
-
-
-
-# ===== Online (active sessions) =====
-@app.post("/online/ping")
-def online_ping(req: OnlinePingReq):
-    sid = (req.session_id or "").strip()
-    if not sid or len(sid) > 128:
-        raise HTTPException(status_code=400, detail="bad session_id")
-    now = int(time.time())
-    with pool.connection() as con:
-        with con:
-            with con.cursor() as cur:
-                cur.execute(
-                    "INSERT INTO online_sessions (session_id, last_seen) VALUES (%s, %s) "
-                    "ON CONFLICT (session_id) DO UPDATE SET last_seen = EXCLUDED.last_seen",
-                    (sid, now),
-                )
-    return {"ok": True, "ts": now}
-
-
-@app.get("/online")
-def online_count(window_sec: int = Query(35, ge=5, le=300)):
-    now = int(time.time())
-    cutoff = now - int(window_sec)
-    # occasional cleanup of very old sessions to keep table small
-    hard_cutoff = now - 3600  # 1 hour
-    with pool.connection() as con:
-        with con:
-            with con.cursor() as cur:
-                cur.execute("DELETE FROM online_sessions WHERE last_seen < %s", (hard_cutoff,))
-                cur.execute("SELECT COUNT(*) FROM online_sessions WHERE last_seen >= %s", (cutoff,))
-                n = int(cur.fetchone()[0] or 0)
-    return {"active": n, "window_sec": int(window_sec)}
 
 # ===== Telegram initData verify (WebApp) =====
 def _parse_init_data(init_data: str) -> dict:
