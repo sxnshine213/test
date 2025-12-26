@@ -130,11 +130,15 @@
       padding: 20px 0 14px;
     }
     .roulette {
+      /* Centering bias can be used if some devices still look ~1-2px off */
+      --center-bias: 0px;
+
       display: flex;
       flex-direction: row;
       flex-wrap: nowrap;
       gap: 16px;
-      padding: 0 16px;
+      /* Add vertical padding so glow/outline is NOT clipped by overflow */
+      padding: 12px 16px;
       align-items: center;
       overflow-x: scroll;
       overflow-y: hidden;
@@ -147,17 +151,42 @@
     .roulette::-webkit-scrollbar { display: none; }
     .item {
       /* slightly bigger gift cards */
+      position: relative;
       flex: 0 0 110px;
       width: 110px;
       background: linear-gradient(180deg, #1b2a40, #0f1a2b);
       border-radius: 16px;
       padding: 14px;
       text-align: center;
+      overflow: hidden;
       transition: transform 180ms ease, box-shadow 180ms ease;
+      will-change: transform;
+
+      /* default highlight (rare) */
+      --win-rgb: 74,163,255;
     }
+
+    /* Rarity -> highlight color */
+    .item[data-rarity="common"] { --win-rgb: 190,190,190; }
+    .item[data-rarity="uncommon"] { --win-rgb: 78,219,114; }
+    .item[data-rarity="rare"] { --win-rgb: 74,163,255; }
+    .item[data-rarity="epic"] { --win-rgb: 182,105,255; }
+    .item[data-rarity="legendary"] { --win-rgb: 255,176,61; }
     .item.win {
       transform: translateY(-2px) scale(1.03);
-      box-shadow: 0 0 0 2px rgba(74,163,255,0.35), 0 0 22px rgba(74,163,255,0.25);
+      box-shadow: 0 0 0 2px rgba(var(--win-rgb),0.45), 0 0 12px rgba(var(--win-rgb),0.28);
+    }
+    .item.win::after{
+      content:"";
+      position:absolute;
+      inset:0;
+      border-radius:inherit;
+      /* all the "nice" highlight is INSIDE the card (so it won't be clipped) */
+      box-shadow:
+        inset 0 0 0 1px rgba(255,255,255,0.06),
+        inset 0 0 0 2px rgba(var(--win-rgb),0.55);
+      background: radial-gradient(circle at 50% 0%, rgba(var(--win-rgb),0.22), rgba(var(--win-rgb),0.06) 46%, rgba(0,0,0,0) 72%);
+      pointer-events:none;
     }
     .item img { width: 70px; height: 70px; }
     .price {
@@ -1244,6 +1273,7 @@ window.addEventListener('error', (ev) => {
     const item = document.createElement('div');
     item.className = 'item';
     item.dataset.id = String(p.id);
+    item.dataset.rarity = String(p.rarity || 'common');
 
     const img = document.createElement('img');
     img.src = (p.icon_url || '').trim() || giftImageById(p.id);
@@ -1949,6 +1979,15 @@ function fmtHHMMSS(sec) {
 
     function easeOutCubic(t) { return 1 - Math.pow(1 - t, 3); }
 
+    function getScrollLeftToCenter(el) {
+      const rRect = r.getBoundingClientRect();
+      const eRect = el.getBoundingClientRect();
+      const rCenter = rRect.left + rRect.width / 2;
+      const eCenter = eRect.left + eRect.width / 2;
+      const bias = parseFloat(getComputedStyle(r).getPropertyValue('--center-bias')) || 0;
+      return Math.round(r.scrollLeft + (eCenter - rCenter) + bias);
+    }
+
     async function spinToPrize(prize) {
       initInfiniteRoulette();
 
@@ -1978,7 +2017,7 @@ function fmtHHMMSS(sec) {
       const target = pickForwardTarget(prize.id);
       if (!target) throw new Error('Не найден item для приза');
 
-      let to = (target.offsetLeft + target.clientWidth / 2) - (r.clientWidth / 2);
+      let to = getScrollLeftToCenter(target);
       let from = r.scrollLeft;
       const STOP_MS = 1600;
 

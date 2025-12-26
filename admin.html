@@ -114,6 +114,13 @@
       <input id="prizeIconUrl" placeholder="Icon URL (https://.../icon.png)" style="min-width:260px;flex:3"/>
       <input id="prizeCost" placeholder="cost" style="width:120px"/>
       <input id="prizeWeight" placeholder="weight" style="width:120px"/>
+      <select id="prizeRarity" style="width:150px;">
+        <option value="common">common</option>
+        <option value="uncommon">uncommon</option>
+        <option value="rare">rare</option>
+        <option value="epic">epic</option>
+        <option value="legendary">legendary</option>
+      </select>
       <input id="prizeSort" placeholder="sort" style="width:120px"/>
       <input id="prizeGiftId" placeholder="gift_id (Telegram)" style="min-width:180px;flex:2"/>
       <label class="muted" style="display:flex;align-items:center;gap:8px;">
@@ -210,6 +217,7 @@
   const prizeIconUrlEl = document.getElementById('prizeIconUrl');
   const prizeCostEl = document.getElementById('prizeCost');
   const prizeWeightEl = document.getElementById('prizeWeight');
+  const prizeRarityEl = document.getElementById('prizeRarity');
   const prizeSortEl = document.getElementById('prizeSort');
 
   const prizeGiftIdEl = document.getElementById('prizeGiftId');
@@ -542,6 +550,19 @@ function prizeRow(p) {
   weight.style.width = '90px';
   tdWeight.appendChild(weight);
 
+  const tdRarity = document.createElement('td');
+  const rarity = document.createElement('select');
+  rarity.innerHTML = `
+    <option value="common">common</option>
+    <option value="uncommon">uncommon</option>
+    <option value="rare">rare</option>
+    <option value="epic">epic</option>
+    <option value="legendary">legendary</option>
+  `;
+  rarity.value = (p.rarity || 'common');
+  rarity.style.width = '120px';
+  tdRarity.appendChild(rarity);
+
   const tdGiftId = document.createElement('td');
   const giftId = document.createElement('input');
   giftId.value = p.gift_id || '';
@@ -587,6 +608,7 @@ function prizeRow(p) {
     icon_url: (icon.value || '').trim() || null,
     cost: parseInt(cost.value, 10) || 0,
     weight: parseInt(weight.value, 10) || 0,
+    rarity: (rarity.value || 'common'),
     gift_id: (giftId.value || '').trim() || null,
     is_unique: !!unique.checked,
     is_active: !!active.checked,
@@ -601,6 +623,7 @@ function prizeRow(p) {
   };
 
   [name, icon, cost, weight, giftId, sort].forEach(el => el.addEventListener('input', onChange));
+  rarity.addEventListener('change', onChange);
   [unique, active].forEach(el => el.addEventListener('change', onChange));
 
   btnSave.onclick = async () => {
@@ -639,6 +662,7 @@ function prizeRow(p) {
   tr.appendChild(tdIcon);
   tr.appendChild(tdCost);
   tr.appendChild(tdWeight);
+  tr.appendChild(tdRarity);
   tr.appendChild(tdGiftId);
   tr.appendChild(tdUnique);
   tr.appendChild(tdSort);
@@ -665,7 +689,7 @@ function renderPrizes(){
 
   const table = document.createElement('table');
   const thead = document.createElement('thead');
-  thead.innerHTML = '<tr><th>id</th><th></th><th>name</th><th>icon_url</th><th>cost</th><th>weight</th><th>gift_id</th><th>unique</th><th>sort</th><th>active</th><th>created</th><th>actions</th></tr>';
+  thead.innerHTML = '<tr><th>id</th><th></th><th>name</th><th>icon_url</th><th>cost</th><th>weight</th><th>rarity</th><th>gift_id</th><th>unique</th><th>sort</th><th>active</th><th>created</th><th>actions</th></tr>';
   table.appendChild(thead);
 
   const tbody = document.createElement('tbody');
@@ -700,6 +724,7 @@ async function createPrize() {
   const sort = parseInt((prizeSortEl?.value || '').trim(), 10);
   const is_active = !!prizeActiveEl?.checked;
   const icon_url = (prizeIconUrlEl?.value || '').trim() || null;
+  const rarity = (prizeRarityEl?.value || 'common');
 
   const gift_id = (prizeGiftIdEl?.value || '').trim() || null;
   const is_unique = !!prizeUniqueEl?.checked;
@@ -717,6 +742,7 @@ async function createPrize() {
         name,
         cost,
         weight,
+        rarity,
         gift_id,
         is_unique,
         is_active,
@@ -729,6 +755,7 @@ async function createPrize() {
     if (prizeIconUrlEl) prizeIconUrlEl.value = '';
     if (prizeCostEl) prizeCostEl.value = '';
     if (prizeWeightEl) prizeWeightEl.value = '';
+    if (prizeRarityEl) prizeRarityEl.value = 'common';
     if (prizeSortEl) prizeSortEl.value = '';
     if (prizeGiftIdEl) prizeGiftIdEl.value = '';
     if (prizeUniqueEl) prizeUniqueEl.checked = false;
@@ -789,6 +816,7 @@ async function applyImportPrizes(){
         icon_url: (String(it.icon_url ?? '')).trim() || null,
         cost: parseInt(it.cost ?? 0, 10) || 0,
         weight: parseInt(it.weight ?? 0, 10) || 0,
+        rarity: String(it.rarity ?? 'common') || 'common',
         gift_id: String(it.gift_id ?? '').trim() || null,
         is_unique: !!it.is_unique,
         is_active: it.is_active === undefined ? true : !!it.is_active,
