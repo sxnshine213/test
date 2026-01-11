@@ -217,6 +217,18 @@ class CasePrizeIn(BaseModel):
 
 # ===== DB init =====
 
+def has_column(cur, table: str, column: str) -> bool:
+    """Return True if given column exists in public.<table>."""
+    try:
+        cur.execute(
+            "SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name=%s AND column_name=%s",
+            (table, column),
+        )
+        return cur.fetchone() is not None
+    except Exception:
+        return False
+
+
 def init_db():
     with pool.connection() as con:
         with con:
@@ -315,36 +327,36 @@ def init_db():
                     """
                 )
 
-# Ensure at least one settings row exists (supports legacy schema without id).
-now_ts = int(time.time())
-try:
-    if has_column(cur, "app_settings", "id"):
-        cur.execute(
-            "INSERT INTO app_settings (id, lottery_badge_url, created_at, updated_at) "
-            "VALUES (1, NULL, %s, %s) "
-            "ON CONFLICT (id) DO NOTHING",
-            (now_ts, now_ts),
-        )
-    else:
-        cur.execute("SELECT COUNT(*) FROM app_settings")
-        cnt = int(cur.fetchone()[0])
-        if cnt <= 0:
-            cols = []
-            vals = []
-            if has_column(cur, "app_settings", "lottery_badge_url"):
-                cols.append("lottery_badge_url"); vals.append(None)
-            if has_column(cur, "app_settings", "created_at"):
-                cols.append("created_at"); vals.append(now_ts)
-            if has_column(cur, "app_settings", "updated_at"):
-                cols.append("updated_at"); vals.append(now_ts)
-            if cols:
-                placeholders = ",".join(["%s"] * len(cols))
-                cur.execute(
-                    f"INSERT INTO app_settings ({','.join(cols)}) VALUES ({placeholders})",
-                    tuple(vals),
-                )
-except Exception:
-    pass
+                # Ensure at least one settings row exists (supports legacy schema without id).
+                now_ts = int(time.time())
+                try:
+                    if has_column(cur, "app_settings", "id"):
+                        cur.execute(
+                            "INSERT INTO app_settings (id, lottery_badge_url, created_at, updated_at) "
+                            "VALUES (1, NULL, %s, %s) "
+                            "ON CONFLICT (id) DO NOTHING",
+                            (now_ts, now_ts),
+                        )
+                    else:
+                        cur.execute("SELECT COUNT(*) FROM app_settings")
+                        cnt = int(cur.fetchone()[0])
+                        if cnt <= 0:
+                            cols = []
+                            vals = []
+                            if has_column(cur, "app_settings", "lottery_badge_url"):
+                                cols.append("lottery_badge_url"); vals.append(None)
+                            if has_column(cur, "app_settings", "created_at"):
+                                cols.append("created_at"); vals.append(now_ts)
+                            if has_column(cur, "app_settings", "updated_at"):
+                                cols.append("updated_at"); vals.append(now_ts)
+                            if cols:
+                                placeholders = ",".join(["%s"] * len(cols))
+                                cur.execute(
+                                    f"INSERT INTO app_settings ({','.join(cols)}) VALUES ({placeholders})",
+                                    tuple(vals),
+                                )
+                except Exception:
+                    pass
 
 
                 # Promocodes
@@ -732,9 +744,9 @@ def display_name(username: Optional[str], first_name: Optional[str], last_name: 
 
 
 
-def is_numeric_user_id\(uid: str\) -> bool:
+def is_numeric_user_id(uid: str) -> bool:
     try:
-        int\(str\(uid\)\)
+        int(str(uid))
         return True
     except Exception:
         return False
