@@ -314,11 +314,38 @@ def init_db():
                     )
                     """
                 )
+
+# Ensure at least one settings row exists (supports legacy schema without id).
+now_ts = int(time.time())
+try:
+    if has_column(cur, "app_settings", "id"):
+        cur.execute(
+            "INSERT INTO app_settings (id, lottery_badge_url, created_at, updated_at) "
+            "VALUES (1, NULL, %s, %s) "
+            "ON CONFLICT (id) DO NOTHING",
+            (now_ts, now_ts),
+        )
+    else:
+        cur.execute("SELECT COUNT(*) FROM app_settings")
+        cnt = int(cur.fetchone()[0])
+        if cnt <= 0:
+            cols = []
+            vals = []
+            if has_column(cur, "app_settings", "lottery_badge_url"):
+                cols.append("lottery_badge_url"); vals.append(None)
+            if has_column(cur, "app_settings", "created_at"):
+                cols.append("created_at"); vals.append(now_ts)
+            if has_column(cur, "app_settings", "updated_at"):
+                cols.append("updated_at"); vals.append(now_ts)
+            if cols:
+                placeholders = ",".join(["%s"] * len(cols))
                 cur.execute(
-                    "INSERT INTO app_settings (id, lottery_badge_url, created_at, updated_at) "
-                    "VALUES (1, NULL, EXTRACT(EPOCH FROM NOW())::bigint, EXTRACT(EPOCH FROM NOW())::bigint) "
-                    "ON CONFLICT (id) DO NOTHING"
+                    f"INSERT INTO app_settings ({','.join(cols)}) VALUES ({placeholders})",
+                    tuple(vals),
                 )
+except Exception:
+    pass
+
 
                 # Promocodes
                 cur.execute(
@@ -705,23 +732,48 @@ def display_name(username: Optional[str], first_name: Optional[str], last_name: 
 
 
 
-def is_numeric_user_id(uid: str) -> bool:
+def is_numeric_user_id\(uid: str\) -> bool:
     try:
-        int(str(uid))
+        int\(str\(uid\)\)
         return True
     except Exception:
         return False
 
 
-def get_ui_settings(cur) -> dict:
+def has_column(cur, table: str, column: str) -> bool:
     try:
-        cur.execute("SELECT lottery_badge_url FROM app_settings WHERE id=1")
-        row = cur.fetchone()
-        url = (row[0] if row else None)
-        url = (str(url).strip() if url is not None else None)
-        return {"lottery_badge_url": (url or None)}
+        cur.execute(
+            "SELECT 1 FROM information_schema.columns WHERE table_name=%s AND column_name=%s",
+            (table, column),
+        )
+        return cur.fetchone() is not None
     except Exception:
-        return {"lottery_badge_url": None}
+        return False
+
+
+def get_ui_settings(cur) -> dict:
+    """Reads UI settings from app_settings. Supports both schemas:
+    - new: app_settings(id PK, lottery_badge_url, created_at, updated_at) with singleton id=1
+    - legacy: app_settings(lottery_badge_url, created_at, updated_at) without id (single-row table)
+    """
+    url = None
+    try:
+        if has_column(cur, "app_settings", "id"):
+            cur.execute("SELECT lottery_badge_url FROM app_settings WHERE id=1")
+            row = cur.fetchone()
+            if not row:
+                cur.execute("SELECT lottery_badge_url FROM app_settings LIMIT 1")
+                row = cur.fetchone()
+        else:
+            cur.execute("SELECT lottery_badge_url FROM app_settings LIMIT 1")
+            row = cur.fetchone()
+        if row:
+            url = row[0]
+    except Exception:
+        url = None
+
+    url = (str(url).strip() if url is not None else None)
+    return {"lottery_badge_url": (url or None)}
 
 
 def _norm_promo_code(code: Optional[str]) -> str:
@@ -1853,10 +1905,28 @@ def admin_update_settings(request: Request, req: AdminSettingsIn):
     with pool.connection() as con:
         with con:
             with con.cursor() as cur:
-                cur.execute(
-                    "UPDATE app_settings SET lottery_badge_url=%s, updated_at=%s WHERE id=1",
-                    (url, now),
-                )
+                try:
+                    if has_column(cur, "app_settings", "id"):
+                        cur.execute(
+                            "INSERT INTO app_settings (id, lottery_badge_url, created_at, updated_at) "
+                            "VALUES (1, %s, %s, %s) "
+                            "ON CONFLICT (id) DO UPDATE SET lottery_badge_url=EXCLUDED.lottery_badge_url, updated_at=EXCLUDED.updated_at",
+                            (url, now, now),
+                        )
+                    else:
+                        cur.execute("UPDATE app_settings SET lottery_badge_url=%s, updated_at=%s", (url, now))
+                        if cur.rowcount == 0:
+                            cur.execute(
+                                "INSERT INTO app_settings (lottery_badge_url, created_at, updated_at) VALUES (%s,%s,%s)",
+                                (url, now, now),
+                            )
+                except Exception:
+                    try:
+                        cur.execute("UPDATE app_settings SET lottery_badge_url=%s", (url,))
+                        if cur.rowcount == 0:
+                            cur.execute("INSERT INTO app_settings (lottery_badge_url) VALUES (%s)", (url,))
+                    except Exception:
+                        pass
                 ui = get_ui_settings(cur)
     return ui
 
