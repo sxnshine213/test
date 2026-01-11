@@ -141,6 +141,30 @@ class InventoryWithdrawReq(WithInitData):
 
 class TopupCreateReq(WithInitData):
     stars: int
+    promo_code: Optional[str] = None
+
+
+class TopupPreviewReq(WithInitData):
+    stars: int
+    promo_code: Optional[str] = None
+
+
+class OnlinePingReq(BaseModel):
+    session_id: str
+
+
+class AdminSettingsIn(BaseModel):
+    lottery_badge_url: Optional[str] = None
+
+
+class PromoCodeIn(BaseModel):
+    code: str
+    bonus_percent: int = 0
+    bonus_flat: int = 0
+    max_uses: Optional[int] = None
+    valid_from: Optional[int] = None
+    valid_to: Optional[int] = None
+    is_active: bool = True
 
 
 class LeaderboardReq(WithInitData):
@@ -274,6 +298,72 @@ def init_db():
                 )
 
                 
+                # --- Schema upgrades (topups promo, settings, promocodes, online) ---
+                cur.execute("ALTER TABLE topups ADD COLUMN IF NOT EXISTS promo_code TEXT")
+                cur.execute("ALTER TABLE topups ADD COLUMN IF NOT EXISTS bonus_amount INTEGER NOT NULL DEFAULT 0")
+                cur.execute("ALTER TABLE topups ADD COLUMN IF NOT EXISTS total_credit INTEGER")
+
+                # UI settings (single-row)
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS app_settings (
+                      id INTEGER PRIMARY KEY,
+                      lottery_badge_url TEXT,
+                      created_at BIGINT NOT NULL,
+                      updated_at BIGINT NOT NULL
+                    )
+                    """
+                )
+                cur.execute(
+                    "INSERT INTO app_settings (id, lottery_badge_url, created_at, updated_at) "
+                    "VALUES (1, NULL, EXTRACT(EPOCH FROM NOW())::bigint, EXTRACT(EPOCH FROM NOW())::bigint) "
+                    "ON CONFLICT (id) DO NOTHING"
+                )
+
+                # Promocodes
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS promocodes (
+                      code TEXT PRIMARY KEY,
+                      bonus_percent INTEGER NOT NULL DEFAULT 0,
+                      bonus_flat INTEGER NOT NULL DEFAULT 0,
+                      max_uses INTEGER,
+                      used_count INTEGER NOT NULL DEFAULT 0,
+                      valid_from BIGINT,
+                      valid_to BIGINT,
+                      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                      created_at BIGINT NOT NULL,
+                      updated_at BIGINT NOT NULL
+                    )
+                    """
+                )
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_promocodes_active ON promocodes(is_active, code)")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_promocodes_time ON promocodes(valid_from, valid_to)")
+
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS promocode_uses (
+                      code TEXT NOT NULL REFERENCES promocodes(code) ON DELETE CASCADE,
+                      tg_user_id TEXT NOT NULL REFERENCES users(tg_user_id) ON DELETE CASCADE,
+                      used_at BIGINT NOT NULL,
+                      topup_payload TEXT,
+                      PRIMARY KEY (code, tg_user_id)
+                    )
+                    """
+                )
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_promocode_uses_user_time ON promocode_uses(tg_user_id, used_at DESC)")
+
+                # Online sessions (for front online badge)
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS online_sessions (
+                      session_id TEXT PRIMARY KEY,
+                      last_seen BIGINT NOT NULL
+                    )
+                    """
+                )
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_online_last_seen ON online_sessions(last_seen DESC)")
+
                 # --- Schema upgrades (cases, gifts, claims, withdraw locks) ---
                 cur.execute("ALTER TABLE prizes ADD COLUMN IF NOT EXISTS gift_id TEXT")
                 cur.execute("ALTER TABLE prizes ADD COLUMN IF NOT EXISTS is_unique BOOLEAN NOT NULL DEFAULT FALSE")
@@ -612,6 +702,124 @@ def display_name(username: Optional[str], first_name: Optional[str], last_name: 
         return "@" + u.lstrip("@")
     full = ((first_name or "").strip() + " " + (last_name or "").strip()).strip()
     return full if full else mask_uid(uid)
+
+
+
+def is_numeric_user_id(uid: str) -> bool:
+    try:
+        int(str(uid))
+        return True
+    except Exception:
+        return False
+
+
+def get_ui_settings(cur) -> dict:
+    try:
+        cur.execute("SELECT lottery_badge_url FROM app_settings WHERE id=1")
+        row = cur.fetchone()
+        url = (row[0] if row else None)
+        url = (str(url).strip() if url is not None else None)
+        return {"lottery_badge_url": (url or None)}
+    except Exception:
+        return {"lottery_badge_url": None}
+
+
+def _norm_promo_code(code: Optional[str]) -> str:
+    return (str(code or "").strip().upper())
+
+
+def promo_preview(cur, tg_user_id: str, promo_code: Optional[str], stars: int, now_ts: int) -> tuple[int, Optional[dict]]:
+    """
+    Returns (bonus_amount, promo_obj or None).
+    promo_obj schema:
+      {code, applied, bonus, reason}
+    reason in: not_found, inactive, not_started, expired, limit_reached, already_used
+    """
+    code = _norm_promo_code(promo_code)
+    if not code:
+        return 0, None
+
+    cur.execute(
+        "SELECT code, bonus_percent, bonus_flat, max_uses, used_count, valid_from, valid_to, is_active "
+        "FROM promocodes WHERE code=%s",
+        (code,),
+    )
+    row = cur.fetchone()
+    if not row:
+        return 0, {"code": code, "applied": False, "bonus": 0, "reason": "not_found"}
+
+    _, bonus_percent, bonus_flat, max_uses, used_count, valid_from, valid_to, is_active = row
+    if not bool(is_active):
+        return 0, {"code": code, "applied": False, "bonus": 0, "reason": "inactive"}
+
+    if valid_from is not None and int(valid_from) > int(now_ts):
+        return 0, {"code": code, "applied": False, "bonus": 0, "reason": "not_started"}
+
+    if valid_to is not None and int(valid_to) < int(now_ts):
+        return 0, {"code": code, "applied": False, "bonus": 0, "reason": "expired"}
+
+    if max_uses is not None and int(used_count or 0) >= int(max_uses):
+        return 0, {"code": code, "applied": False, "bonus": 0, "reason": "limit_reached"}
+
+    # already used by this user?
+    cur.execute("SELECT 1 FROM promocode_uses WHERE code=%s AND tg_user_id=%s", (code, str(tg_user_id)))
+    if cur.fetchone():
+        return 0, {"code": code, "applied": False, "bonus": 0, "reason": "already_used"}
+
+    bp = int(bonus_percent or 0)
+    bf = int(bonus_flat or 0)
+    bonus = max(0, (int(stars) * bp) // 100 + bf)
+    return bonus, {"code": code, "applied": True, "bonus": bonus, "reason": None}
+
+
+def promo_apply_for_payment(cur, tg_user_id: str, promo_code: Optional[str], stars: int, now_ts: int, payload: str) -> tuple[int, Optional[dict]]:
+    """Same as promo_preview, but enforces max_uses/used_count atomically and records usage."""
+    code = _norm_promo_code(promo_code)
+    if not code:
+        return 0, None
+
+    # lock promocode row for consistent checks
+    cur.execute(
+        "SELECT code, bonus_percent, bonus_flat, max_uses, used_count, valid_from, valid_to, is_active "
+        "FROM promocodes WHERE code=%s FOR UPDATE",
+        (code,),
+    )
+    row = cur.fetchone()
+    if not row:
+        return 0, {"code": code, "applied": False, "bonus": 0, "reason": "not_found"}
+
+    _, bonus_percent, bonus_flat, max_uses, used_count, valid_from, valid_to, is_active = row
+    if not bool(is_active):
+        return 0, {"code": code, "applied": False, "bonus": 0, "reason": "inactive"}
+
+    if valid_from is not None and int(valid_from) > int(now_ts):
+        return 0, {"code": code, "applied": False, "bonus": 0, "reason": "not_started"}
+
+    if valid_to is not None and int(valid_to) < int(now_ts):
+        return 0, {"code": code, "applied": False, "bonus": 0, "reason": "expired"}
+
+    # already used by this user?
+    cur.execute("SELECT 1 FROM promocode_uses WHERE code=%s AND tg_user_id=%s", (code, str(tg_user_id)))
+    if cur.fetchone():
+        return 0, {"code": code, "applied": False, "bonus": 0, "reason": "already_used"}
+
+    if max_uses is not None and int(used_count or 0) >= int(max_uses):
+        return 0, {"code": code, "applied": False, "bonus": 0, "reason": "limit_reached"}
+
+    bp = int(bonus_percent or 0)
+    bf = int(bonus_flat or 0)
+    bonus = max(0, (int(stars) * bp) // 100 + bf)
+
+    # record usage + increment counter
+    cur.execute(
+        "INSERT INTO promocode_uses (code, tg_user_id, used_at, topup_payload) VALUES (%s,%s,%s,%s)",
+        (code, str(tg_user_id), int(now_ts), str(payload)),
+    )
+    cur.execute(
+        "UPDATE promocodes SET used_count = used_count + 1, updated_at=%s WHERE code=%s",
+        (int(now_ts), code),
+    )
+    return bonus, {"code": code, "applied": True, "bonus": bonus, "reason": None}
 
 
 
@@ -956,6 +1164,37 @@ def root():
     return {"ok": True}
 
 
+# ===== Online indicator (used by frontend "online" badge) =====
+@app.post("/online/ping")
+def online_ping(req: OnlinePingReq):
+    sid = (req.session_id or "").strip()
+    if len(sid) < 8 or len(sid) > 80:
+        raise HTTPException(status_code=400, detail="bad session_id")
+    now = int(time.time())
+    with pool.connection() as con:
+        with con:
+            with con.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO online_sessions (session_id, last_seen) VALUES (%s,%s) "
+                    "ON CONFLICT (session_id) DO UPDATE SET last_seen = EXCLUDED.last_seen",
+                    (sid, now),
+                )
+    return {"ok": True}
+
+
+@app.get("/online")
+def online(window_sec: int = Query(35, ge=5, le=300)):
+    now = int(time.time())
+    since = now - int(window_sec)
+    with pool.connection() as con:
+        with con:
+            with con.cursor() as cur:
+                cur.execute("SELECT COUNT(*) FROM online_sessions WHERE last_seen >= %s", (since,))
+                cnt = int(cur.fetchone()[0])
+    return {"online": cnt}
+
+
+
 @app.post("/me")
 def me(req: MeReq):
     uid = extract_tg_user_id(req.initData)
@@ -964,7 +1203,8 @@ def me(req: MeReq):
         with con:
             with con.cursor() as cur:
                 bal = get_or_create_user(cur, uid, public)
-    return {"tg_user_id": uid, "balance": int(bal)}
+                ui = get_ui_settings(cur)
+    return {"tg_user_id": uid, "balance": int(bal), "ui": ui}
 
 
 
@@ -1098,6 +1338,9 @@ def inventory_sell(req: InventorySellReq):
 @app.post("/inventory/withdraw")
 def inventory_withdraw(req: InventoryWithdrawReq):
     uid = extract_tg_user_id(req.initData)
+    if not is_numeric_user_id(uid):
+        raise HTTPException(status_code=400, detail="withdraw is not available for guest")
+
 
     # Step 1: lock inventory row and mark intent (commit before calling Telegram)
     with pool.connection() as con:
@@ -1442,36 +1685,87 @@ def recent_wins(req: MeReq):
     return {"items": items}
 
 
-@app.post("/topup/create")
-def topup_create(req: TopupCreateReq):
+@app.post("/topup/preview")
+def topup_preview(req: TopupPreviewReq):
     uid = extract_tg_user_id(req.initData)
+    if not is_numeric_user_id(uid):
+        raise HTTPException(status_code=400, detail="topup is not available for guest")
+
     stars = int(req.stars or 0)
     if stars < 1 or stars > 10000:
         raise HTTPException(status_code=400, detail="bad stars amount")
 
+    promo_code = (req.promo_code or "").strip()
+
+    now = int(time.time())
+    with pool.connection() as con:
+        with con:
+            with con.cursor() as cur:
+                public = extract_tg_user_public(req.initData)
+                get_or_create_user(cur, uid, public)
+                bonus, promo = promo_preview(cur, uid, promo_code, stars, now)
+
+    total = int(stars) + int(bonus or 0)
+    return {"stars_to_pay": int(stars), "bonus": int(bonus or 0), "total_credit": total, "promo": promo}
+
+
+@app.post("/topup/create")
+def topup_create(req: TopupCreateReq):
+    uid = extract_tg_user_id(req.initData)
+    if not is_numeric_user_id(uid):
+        raise HTTPException(status_code=400, detail="topup is not available for guest")
+
+    stars = int(req.stars or 0)
+    if stars < 1 or stars > 10000:
+        raise HTTPException(status_code=400, detail="bad stars amount")
+
+    promo_code = (req.promo_code or "").strip()
     payload = f"topup:{uid}:{uuid.uuid4()}"
     now = int(time.time())
+
+    planned_bonus = 0
+    promo_obj = None
 
     with pool.connection() as con:
         with con:
             with con.cursor() as cur:
                 public = extract_tg_user_public(req.initData)
                 get_or_create_user(cur, uid, public)
+
+                bonus, promo = promo_preview(cur, uid, promo_code, stars, now)
+                promo_obj = promo
+                if promo and promo.get("applied"):
+                    planned_bonus = int(bonus or 0)
+
+                total_credit = int(stars) + int(planned_bonus)
+
                 cur.execute(
-                    "INSERT INTO topups (tg_user_id, payload, stars_amount, status, created_at) "
-                    "VALUES (%s,%s,%s,'created',%s)",
-                    (uid, payload, stars, now),
+                    "INSERT INTO topups (tg_user_id, payload, stars_amount, status, created_at, promo_code, bonus_amount, total_credit) "
+                    "VALUES (%s,%s,%s,'created',%s,%s,%s,%s)",
+                    (
+                        uid,
+                        payload,
+                        int(stars),
+                        now,
+                        (_norm_promo_code(promo_code) or None),
+                        int(planned_bonus),
+                        int(total_credit),
+                    ),
                 )
+
+    desc = f"+{stars} ⭐ в игре"
+    if planned_bonus > 0:
+        desc = f"+{stars} ⭐ + бонус {planned_bonus} ⭐"
 
     invoice_link = tg_api("createInvoiceLink", {
         "title": "Пополнение баланса",
-        "description": f"+{stars} ⭐ в игре",
+        "description": desc,
         "payload": payload,
         "currency": "XTR",
         "prices": [{"label": f"+{stars} ⭐", "amount": stars}],
     })
 
-    return {"invoice_link": invoice_link, "payload": payload}
+    return {"invoice_link": invoice_link, "payload": payload, "bonus": int(planned_bonus), "total_credit": int(stars) + int(planned_bonus), "promo": promo_obj}
 
 
 @app.post("/tg/webhook")
@@ -1502,7 +1796,7 @@ async def tg_webhook(request: Request):
             with con:
                 with con.cursor() as cur:
                     cur.execute(
-                        "SELECT tg_user_id, stars_amount, status FROM topups WHERE payload=%s FOR UPDATE",
+                        "SELECT tg_user_id, stars_amount, status, promo_code FROM topups WHERE payload=%s FOR UPDATE",
                         (invoice_payload,),
                     )
                     row = cur.fetchone()
@@ -1510,15 +1804,22 @@ async def tg_webhook(request: Request):
                         return {"ok": True}
 
                     uid, expected, status = str(row[0]), int(row[1]), str(row[2])
+                    promo_code = (str(row[3]) if row[3] is not None else "")
                     if status == "paid":
                         return {"ok": True}
                     if total_amount != expected:
                         return {"ok": True}
 
-                    cur.execute("UPDATE users SET balance = balance + %s WHERE tg_user_id=%s", (expected, uid))
+                    now_ts = int(time.time())
+                    bonus_to_apply = 0
+                    if promo_code and promo_code.strip():
+                        bonus_to_apply, _ = promo_apply_for_payment(cur, uid, promo_code, expected, now_ts, invoice_payload)
+
+                    credit = int(expected) + int(bonus_to_apply or 0)
+                    cur.execute("UPDATE users SET balance = balance + %s WHERE tg_user_id=%s", (credit, uid))
                     cur.execute(
-                        "UPDATE topups SET status='paid', telegram_charge_id=%s, paid_at=%s WHERE payload=%s",
-                        (telegram_charge_id, int(time.time()), invoice_payload),
+                        "UPDATE topups SET status='paid', telegram_charge_id=%s, paid_at=%s, bonus_amount=%s, total_credit=%s WHERE payload=%s",
+                        (telegram_charge_id, now_ts, int(bonus_to_apply or 0), credit, invoice_payload),
                     )
 
         return {"ok": True}
@@ -1527,6 +1828,118 @@ async def tg_webhook(request: Request):
 
 
 # ===== Admin API =====
+
+
+# ===== Admin: UI settings =====
+@app.get("/admin/settings")
+def admin_get_settings(request: Request):
+    require_admin(request)
+    with pool.connection() as con:
+        with con:
+            with con.cursor() as cur:
+                ui = get_ui_settings(cur)
+    return ui
+
+
+@app.put("/admin/settings")
+def admin_update_settings(request: Request, req: AdminSettingsIn):
+    require_admin(request)
+    url = (req.lottery_badge_url or None)
+    url = (str(url).strip() if url is not None else None)
+    if url and len(url) > 500:
+        raise HTTPException(status_code=400, detail="lottery_badge_url too long")
+
+    now = int(time.time())
+    with pool.connection() as con:
+        with con:
+            with con.cursor() as cur:
+                cur.execute(
+                    "UPDATE app_settings SET lottery_badge_url=%s, updated_at=%s WHERE id=1",
+                    (url, now),
+                )
+                ui = get_ui_settings(cur)
+    return ui
+
+
+# ===== Admin: Promocodes =====
+@app.get("/admin/promocodes")
+def admin_list_promocodes(request: Request):
+    require_admin(request)
+    with pool.connection() as con:
+        with con:
+            with con.cursor() as cur:
+                cur.execute(
+                    "SELECT code, bonus_percent, bonus_flat, max_uses, used_count, valid_from, valid_to, is_active, created_at, updated_at "
+                    "FROM promocodes ORDER BY code ASC"
+                )
+                rows = cur.fetchall()
+    items = []
+    for r in rows:
+        items.append({
+            "code": str(r[0]),
+            "bonus_percent": int(r[1] or 0),
+            "bonus_flat": int(r[2] or 0),
+            "max_uses": (int(r[3]) if r[3] is not None else None),
+            "used_count": int(r[4] or 0),
+            "valid_from": (int(r[5]) if r[5] is not None else None),
+            "valid_to": (int(r[6]) if r[6] is not None else None),
+            "is_active": bool(r[7]),
+            "created_at": int(r[8] or 0),
+            "updated_at": int(r[9] or 0),
+        })
+    return {"items": items}
+
+
+@app.post("/admin/promocodes")
+def admin_upsert_promocode(request: Request, req: PromoCodeIn):
+    require_admin(request)
+    code = _norm_promo_code(req.code)
+    if not code:
+        raise HTTPException(status_code=400, detail="bad code")
+    if len(code) > 64:
+        raise HTTPException(status_code=400, detail="code too long")
+
+    bonus_percent = int(req.bonus_percent or 0)
+    bonus_flat = int(req.bonus_flat or 0)
+    max_uses = (int(req.max_uses) if req.max_uses is not None else None)
+    valid_from = (int(req.valid_from) if req.valid_from is not None else None)
+    valid_to = (int(req.valid_to) if req.valid_to is not None else None)
+    is_active = bool(req.is_active)
+
+    if bonus_percent < 0: bonus_percent = 0
+    if bonus_flat < 0: bonus_flat = 0
+    if max_uses is not None and max_uses < 0: max_uses = 0
+
+    now = int(time.time())
+    with pool.connection() as con:
+        with con:
+            with con.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO promocodes (code, bonus_percent, bonus_flat, max_uses, used_count, valid_from, valid_to, is_active, created_at, updated_at) "
+                    "VALUES (%s,%s,%s,%s,0,%s,%s,%s,%s,%s) "
+                    "ON CONFLICT (code) DO UPDATE SET "
+                    "bonus_percent=EXCLUDED.bonus_percent, bonus_flat=EXCLUDED.bonus_flat, max_uses=EXCLUDED.max_uses, "
+                    "valid_from=EXCLUDED.valid_from, valid_to=EXCLUDED.valid_to, is_active=EXCLUDED.is_active, updated_at=EXCLUDED.updated_at",
+                    (code, bonus_percent, bonus_flat, max_uses, valid_from, valid_to, is_active, now, now),
+                )
+    return {"ok": True, "code": code}
+
+
+@app.delete("/admin/promocodes/{code}")
+def admin_delete_promocode(request: Request, code: str):
+    require_admin(request)
+    code = _norm_promo_code(code)
+    if not code:
+        raise HTTPException(status_code=400, detail="bad code")
+    with pool.connection() as con:
+        with con:
+            with con.cursor() as cur:
+                cur.execute("DELETE FROM promocodes WHERE code=%s RETURNING code", (code,))
+                row = cur.fetchone()
+                if not row:
+                    raise HTTPException(status_code=404, detail="not found")
+    return {"ok": True, "deleted": code}
+
 
 # ===== Lottery endpoints =====
 @app.post("/lottery/status")
