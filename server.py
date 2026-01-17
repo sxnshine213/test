@@ -19,10 +19,16 @@ from psycopg_pool import ConnectionPool
 
 app = FastAPI()
 
+# CORS
+# Telegram WebApp обычно ходит на ваш API без cookies, поэтому credentials не нужны.
+# Рекомендуется ограничить origins через ENV CORS_ORIGINS="https://your-domain.com,https://t.me".
+_cors_origins_env = os.environ.get("CORS_ORIGINS", "").strip()
+_cors_origins = [o.strip() for o in _cors_origins_env.split(",") if o.strip()] if _cors_origins_env else ["*"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # можно ограничить доменами позже
-    allow_credentials=True,
+    allow_origins=_cors_origins,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -1243,6 +1249,11 @@ def online_ping(req: OnlinePingReq):
                     "ON CONFLICT (session_id) DO UPDATE SET last_seen = EXCLUDED.last_seen",
                     (sid, now),
                 )
+                # simple TTL cleanup to prevent table growth (defense against spam)
+                try:
+                    cur.execute("DELETE FROM online_sessions WHERE last_seen < %s", (now - 600,))
+                except Exception:
+                    pass
     return {"ok": True}
 
 
