@@ -19,9 +19,9 @@ from psycopg_pool import ConnectionPool
 
 app = FastAPI()
 
-# CORS
-# Telegram WebApp обычно ходит на ваш API без cookies, поэтому credentials не нужны.
-# Рекомендуется ограничить origins через ENV CORS_ORIGINS="https://your-domain.com,https://t.me".
+# ===== CORS =====
+# Set CORS_ORIGINS to a comma-separated list of allowed origins
+# (e.g. https://example.com,https://t.me) for production.
 _cors_origins_env = os.environ.get("CORS_ORIGINS", "").strip()
 _cors_origins = [o.strip() for o in _cors_origins_env.split(",") if o.strip()] if _cors_origins_env else ["*"]
 
@@ -33,10 +33,29 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 # ===== ENV =====
 DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
 if not DATABASE_URL:
-    raise RuntimeError("DATABASE_URL is not set (Render Postgres)")
+    raise RuntimeError("DATABASE_URL is not set")
+
+# psycopg / psycopg_pool doesn't accept some URI query params (e.g. pgbouncer=true).
+# Remove them to avoid startup errors.
+from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
+
+
+def _sanitize_db_url(dsn: str) -> str:
+    try:
+        parts = urlsplit(dsn)
+        q = [(k, v) for (k, v) in parse_qsl(parts.query, keep_blank_values=True) if k.lower() not in {"pgbouncer"}]
+        new_query = urlencode(q)
+        return urlunsplit((parts.scheme, parts.netloc, parts.path, new_query, parts.fragment))
+    except Exception:
+        # fallback: best-effort string cleanup
+        return dsn.replace("pgbouncer=true", "").replace("pgbouncer=1", "")
+
+
+DATABASE_URL = _sanitize_db_url(DATABASE_URL)
 
 START_BALANCE = int(os.environ.get("START_BALANCE", "200"))
 
@@ -46,8 +65,9 @@ TG_WEBHOOK_SECRET = os.environ.get("TG_WEBHOOK_SECRET", "").strip()
 ALLOW_GUEST = os.environ.get("ALLOW_GUEST", "0").strip() in ("1", "true", "True", "yes", "YES")
 INITDATA_MAX_AGE_SEC = int(os.environ.get("INITDATA_MAX_AGE_SEC", str(24 * 3600)))
 
-PG_POOL_MIN = int(os.environ.get("PG_POOL_MIN", "1"))
+PG_POOL_MIN = int(os.environ.get("PG_POOL_MIN", "0"))
 PG_POOL_MAX = int(os.environ.get("PG_POOL_MAX", "10"))
+PG_POOL_TIMEOUT = float(os.environ.get("PG_POOL_TIMEOUT", "30"))
 
 ADMIN_KEY = os.environ.get("ADMIN_KEY", "").strip()
 
@@ -70,7 +90,7 @@ DEFAULT_PRIZES = [
     {"id": 5, "name": "🌹 Роза", "cost": 25, "weight": 25, "sort_order": 50, "is_active": True},
 ]
 
-pool = ConnectionPool(conninfo=DATABASE_URL, min_size=PG_POOL_MIN, max_size=PG_POOL_MAX, timeout=10)
+pool = ConnectionPool(conninfo=DATABASE_URL, min_size=PG_POOL_MIN, max_size=PG_POOL_MAX, timeout=PG_POOL_TIMEOUT, kwargs={"prepare_threshold": 0})
 
 lottery_task: asyncio.Task | None = None
 
@@ -80,6 +100,24 @@ lottery_task: asyncio.Task | None = None
 @app.on_event("startup")
 async def _startup():
     global lottery_task
+
+    # Ensure DB is ready before serving requests (and before starting background tasks).
+    attempts = int(os.environ.get("DB_INIT_ATTEMPTS", "10"))
+    delay = float(os.environ.get("DB_INIT_DELAY_SEC", "2"))
+    last_err: Exception | None = None
+    for i in range(attempts):
+        try:
+            init_db()
+            last_err = None
+            break
+        except Exception as e:
+            last_err = e
+            print(f"DB not ready yet ({i+1}/{attempts}): {e}")
+            await asyncio.sleep(delay)
+    if last_err is not None:
+        # Final attempt (raise loudly if still failing)
+        init_db()
+
     # background worker that finalizes hourly lotteries even if nobody calls endpoints
     if lottery_task is None:
         lottery_task = asyncio.create_task(lottery_worker())
@@ -236,7 +274,8 @@ def has_column(cur, table: str, column: str) -> bool:
 
 
 def init_db():
-    with pool.connection() as con:
+    conn_timeout = float(os.environ.get("DB_INIT_CONN_TIMEOUT", "30"))
+    with pool.connection(timeout=conn_timeout) as con:
         with con:
             with con.cursor() as cur:
                 # users
@@ -613,8 +652,6 @@ def init_db():
                         (default_case_id, now),
                     )
 
-
-init_db()
 
 
 # ===== Admin auth =====
@@ -1249,11 +1286,6 @@ def online_ping(req: OnlinePingReq):
                     "ON CONFLICT (session_id) DO UPDATE SET last_seen = EXCLUDED.last_seen",
                     (sid, now),
                 )
-                # simple TTL cleanup to prevent table growth (defense against spam)
-                try:
-                    cur.execute("DELETE FROM online_sessions WHERE last_seen < %s", (now - 600,))
-                except Exception:
-                    pass
     return {"ok": True}
 
 

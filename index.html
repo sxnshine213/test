@@ -1200,20 +1200,33 @@ async function initOnlineIndicator() {
 
   const sid = getOrCreateSessionId();
 
-  // Online counter: can be real (from backend) or "marketing" mode (fake base range + gentle movement).
-  // Toggle here:
+  // Desired behavior:
+  // - updates rarely (every 10–20s)
+  // - changes only by 1–3 units
+  // - randomly goes up/down
+  // - still reflects real active users, but smoothed (also 1–3 per update)
+  // ===== ONLINE DISPLAY SETTINGS =====
+  // If true, show a believable but fake 'online' number (useful for social proof).
+  // If false, show the real number from the backend (smoothed).
   const FAKE_ONLINE = true;
   const FAKE_BASE_MIN = 40;
   const FAKE_BASE_MAX = 70;
-  // How much the real number influences fake (0 = fully fake, 0.2 = slight correlation)
+  // How much the real online signal influences the fake number:
+  // 0 = fully fake; 1 = base + full real online
   const FAKE_SIGNAL_WEIGHT = 0.15;
 
+  const baseMin = FAKE_ONLINE ? FAKE_BASE_MIN : 0;
+  const baseMax = FAKE_ONLINE ? FAKE_BASE_MAX : 0;
+
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
   const randInt = (a, b) => Math.floor(Math.random() * (b - a + 1)) + a;
+  const randStep = () => (Math.random() < 0.5 ? -1 : 1) * randInt(1, 3);
   const randDelay = () => randInt(10_000, 20_000);
 
+  let base = Math.round((baseMin + baseMax) / 2);
   let activeActual = 0;
-  let shown = 0;
-  let initialized = false;
+  let activeSmooth = 0;
+  let shown = base; // shown = base + activeSmooth (but we smooth the final number too)
 
   async function ping() {
     try {
@@ -1230,31 +1243,31 @@ async function initOnlineIndicator() {
       const r = await fetch(`${API_BASE}/online?window_sec=35`, { cache: 'no-store' });
       const j = await r.json();
       const n = Number(j?.online ?? 0);
-      if (Number.isFinite(n) && n >= 0) activeActual = n;
+      if (Number.isFinite(n) && n >= 0) activeActual = FAKE_ONLINE ? Math.round(n * FAKE_SIGNAL_WEIGHT) : n;
     } catch (_) {}
   }
 
-  function computeFakeDesired() {
-    const base = randInt(FAKE_BASE_MIN, FAKE_BASE_MAX);
-    const wave = Math.round(Math.sin(Date.now() / 60000) * 3); // slow breathing
-    const jitter = randInt(-2, 2);
-    const signal = Math.max(0, Math.min(activeActual, 25));
-    const signalPart = Math.round(signal * FAKE_SIGNAL_WEIGHT);
-    return Math.max(0, base + wave + jitter + signalPart);
-  }
-
   function updateOnce() {
-    const desired = FAKE_ONLINE ? computeFakeDesired() : Math.max(0, Math.round(activeActual));
-
-    if (!initialized) {
-      shown = desired;
-      initialized = true;
+    // 1) Random-walk base (only in FAKE_ONLINE mode)
+    if (FAKE_ONLINE) {
+      base = clamp(base + randStep(), baseMin, baseMax);
     } else {
-      const diff = desired - shown;
-      if (diff !== 0) {
-        const step = Math.min(Math.abs(diff), randInt(1, 3));
-        shown += Math.sign(diff) * step;
-      }
+      base = 0;
+    }
+
+    // 2) Smooth activeActual -> activeSmooth by max 1..3 per update
+    const diffA = activeActual - activeSmooth;
+    if (diffA !== 0) {
+      const stepA = Math.min(Math.abs(diffA), randInt(1, 3));
+      activeSmooth += Math.sign(diffA) * stepA;
+    }
+
+    // 3) Desired total and final smoothing (so the number never jumps more than 1..3)
+    const desired = Math.round(base + activeSmooth);
+    const diff = desired - shown;
+    if (diff !== 0) {
+      const step = Math.min(Math.abs(diff), randInt(1, 3));
+      shown += Math.sign(diff) * step;
     }
 
     // Subtle "bump" animation on change
@@ -1271,13 +1284,14 @@ async function initOnlineIndicator() {
   // kick off
   onlineCountEl.style.transition = 'transform 220ms ease, opacity 220ms ease';
   ping();
-  await fetchActive();
-  updateOnce();
+  fetchActive().finally(() => {
+    updateOnce();
+  });
 
   // Keep sessions accurate (doesn't affect how often the number changes)
   setInterval(ping, 10_000);
 
-  // Main loop: every 10–20s refresh active and apply smoothing
+  // Main loop: every 10–20s refresh active and apply a tiny random move
   (function loop() {
     setTimeout(async () => {
       await fetchActive();
@@ -1286,7 +1300,6 @@ async function initOnlineIndicator() {
     }, randDelay());
   })();
 }
-
 
 
 const topupBtn = document.getElementById('topupBtn');
@@ -1642,8 +1655,6 @@ const topupBtn = document.getElementById('topupBtn');
     }
 
     function rebuildRouletteFromPrizes(items) {
-  // Use the roulette tape element (previously referenced as an undefined `r`)
-  const r = roulette || document.querySelector('.roulette');
   if (!r) return;
   const list = Array.isArray(items) ? items : [];
   if (!list.length) {
